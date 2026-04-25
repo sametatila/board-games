@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.redblobgames.com)",
+      "WebFetch(domain:docs.partykit.io)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:boardgamegeek.com)",
+      "WebFetch(domain:blog.colonist.io)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:simonvandevelde.be)",
+      "Bash(npx --yes create-next-app@latest . --typescript --app --tailwind --eslint --src-dir --import-alias \"@/*\" --use-npm --turbopack --yes)"
+    ]
+  }
+}
