@@ -148,7 +148,7 @@ const twinIslands: MapTemplate = {
   id: "twin_islands",
   name: "Yeni Kıyılar",
   description:
-    "Ana kıta + 3 küçük dış ada, gemiyle keşfet. Her yeni adada bonus VP.",
+    "Ana kıta + 3 küçük dış ada, gemiyle keşfet. Her yeni adada bonus GP.",
   hasShips: true,
   hasPirate: true,
   hasFog: false,
@@ -189,7 +189,7 @@ const fourIslands: MapTemplate = {
   id: "archipelago",
   name: "Dört Ada",
   description:
-    "Dört eşit ada cross şeklinde dizili. Yabancı adaya yerleşim +1 VP.",
+    "Dört eşit ada cross şeklinde dizili. Yabancı adaya yerleşim +1 GP.",
   hasShips: true,
   hasPirate: true,
   hasFog: false,
@@ -244,7 +244,7 @@ const throughDesert: MapTemplate = {
   id: "desert_spiral",
   name: "Çöl Üzerinden",
   description:
-    "Ana adanın ortasından geçen çöl bandı. Çölün karşı tarafına ilk yerleşim +2 VP.",
+    "Ana adanın ortasından geçen çöl bandı. Çölün karşı tarafına ilk yerleşim +2 GP.",
   hasShips: false,
   hasPirate: false,
   hasFog: false,
@@ -295,6 +295,157 @@ const pirateIslands: MapTemplate = {
     slots.push(goldSlot({ q: -2, r: 0 }));
     fillSeaAroundLand(slots, 1);
     return slots;
+  },
+};
+
+// Long-form "how to play" guide for each map. Surface this in the lobby
+// and via a help button so players know what's special about the variant
+// they're sitting down to play. Plain prose; rendered as paragraphs.
+export const MAP_GUIDES: Record<MapTemplateId, { title: string; sections: { heading: string; body: string }[] }> = {
+  classic: {
+    title: "Klasik Catan",
+    sections: [
+      {
+        heading: "Hedef",
+        body:
+          "Yerleşim, şehir, en uzun yol ve gizli galibiyet kartlarıyla yukarıda gösterilen galibiyet puanına ilk ulaşan oyuncu kazanır. Klasik kural 10 GP'dir; oyuncu sayısına ve host ayarına göre değişir. 7+ oyuncuda settlement/road limitleri de otomatik yükselir.",
+      },
+      {
+        heading: "Sıra akışı",
+        body:
+          "Sırası gelen oyuncu önce zar atar (7 hariç), uygun hex'lerin komşu yapılarına kaynak dağılır, sonra ticaret yapabilir, kaynaklarıyla yapı/yol/kart inşa edebilir, en az bir kart oynayabilir ve sırayı bitirir.",
+      },
+      {
+        heading: "Hırsız",
+        body:
+          "7 atılınca 7'den fazla kart tutan herkes elini yarıya indirir. Aktif oyuncu hırsızı istediği hex'e taşır ve o hex'in komşu yapılarından birinden rastgele bir kaynak çalar. Hırsızın bulunduğu hex artık üretmez.",
+      },
+      {
+        heading: "Bonuslar",
+        body:
+          "5+ ardışık yol En Uzun Yol bonusu (+2 GP), 3+ Şövalye oynanmış En Büyük Ordu bonusu (+2 GP) verir. Limanlar 2:1 (kaynaklı) veya 3:1 (genel) takas hakkı sağlar.",
+      },
+    ],
+  },
+  twin_islands: {
+    title: "Yeni Kıyılar",
+    sections: [
+      {
+        heading: "Genel",
+        body:
+          "Ana kıta + 3 küçük dış ada. Gemilerle dış adalara açıl, oradaki yerleşimler bonus puan getirir. Galibiyet hedefi yukarıda gösterilen puandır (varsayılan 13).",
+      },
+      {
+        heading: "Gemiler",
+        body:
+          "Gemi (1🌲 1🐑) bir kenara kurulur ve yol gibi davranır ama deniz/kıyı kenarlarında oturur. Bir gemiyi sırada bir kez taşıyabilirsin (zincir ucunda olanlar) — yeni inşa ettiğin gemi taşınamaz.",
+      },
+      {
+        heading: "Yabancı ada bonusu",
+        body:
+          "İlk yerleşimini farklı bir adada açtığın anda +2 GP kazanırsın. Üç dış adanın hepsine de yerleştiğinde toplamda +6 GP elde edebilirsin.",
+      },
+      {
+        heading: "Korsan",
+        body:
+          "Bu haritada hırsızla birlikte korsan da var. 7 atılınca veya Şövalye oynayınca, hedef bir kara hex ise hırsız taşınır; bir deniz hex ise korsan taşınır. Korsanın bulunduğu hex'in komşu gemilerinden kaynak çalar.",
+      },
+      {
+        heading: "Altın hex",
+        body:
+          "Adalar arasında altın damarı hex'leri var. Üzerlerinde 2 hex altın olduğunda, bu hex'in komşusu olan oyuncu istediği bir kaynağı seçer.",
+      },
+    ],
+  },
+  archipelago: {
+    title: "Dört Ada",
+    sections: [
+      {
+        heading: "Genel",
+        body:
+          "Eşit boyutta 4 ada. Galibiyet hedefi yukarıda gösterilen puandır (varsayılan 12). Adaların hepsine yayılmak strateji açısından kritik.",
+      },
+      {
+        heading: "Yabancı ada bonusu",
+        body:
+          "Her yeni adaya ilk kez yerleştiğinde +1 GP. Dört adanın tamamı +3 GP toplamında bonus verir.",
+      },
+      {
+        heading: "Gemiler",
+        body:
+          "Bu haritada yol yerine gemi inşa edilir; gemiler kıyıdan kıyıya geçişi sağlar. Gemi zincirleri En Uzun Rota bonusunu da hedefler.",
+      },
+      {
+        heading: "Korsan",
+        body:
+          "Korsan denize taşınır ve yakındaki gemilerden kaynak çalar. Şövalye oynanırken hex tipine göre hırsız ya da korsan hareket eder.",
+      },
+    ],
+  },
+  fog_frontier: {
+    title: "Sis Adaları",
+    sections: [
+      {
+        heading: "Genel",
+        body:
+          "Kuzey ve güney adaları arasında sisle örtülü hex'ler var. Sisli hex'ler üzerine bir gemi/yol komşu olduğunda otomatik açılır ve içeriği görünür hale gelir.",
+      },
+      {
+        heading: "Sis nasıl açılır?",
+        body:
+          "Bir sis hex'inin kenarına gemi/yol kurman yeterli — sis kalkar, hex'in gerçek terreni (kara, altın, deniz) ortaya çıkar. Açılan kara üzerine yerleşim/yol kurabilir, denizden gemiyle geçebilirsin.",
+      },
+      {
+        heading: "Yabancı ada bonusu",
+        body:
+          "İlk başladığın adadan başka bir adaya yerleştiğinde +1 GP.",
+      },
+    ],
+  },
+  desert_spiral: {
+    title: "Çöl Üzerinden",
+    sections: [
+      {
+        heading: "Genel",
+        body:
+          "Ana adanın ortasından bir çöl bandı geçer. Galibiyet hedefi yukarıda gösterilen puandır (varsayılan 12). Çölün karşı tarafına yerleşmek için yol köprüsü kurman gerekir.",
+      },
+      {
+        heading: "Çöl geçiş bonusu",
+        body:
+          "Çölü kuzeye/güneye geçen ilk yerleşim +2 GP kazanır. Karşı tarafta üretici hex'leri olduğu için ekonomik olarak da karlı.",
+      },
+      {
+        heading: "Gemiler yok",
+        body:
+          "Bu haritada deniz/gemi yok — sadece yol ve klasik kara mekaniği.",
+      },
+    ],
+  },
+  continental_divide: {
+    title: "Korsan Adaları",
+    sections: [
+      {
+        heading: "Genel",
+        body:
+          "Doğuda yerleşim adası, batıda korsanların kontrolündeki iki kale adası. Galibiyet hedefi yukarıda gösterilen puandır (varsayılan 11). Kale fethi büyük puan kazandırır.",
+      },
+      {
+        heading: "Savaş gemisi",
+        body:
+          "Normal bir gemini, 1 Şövalye kartı harcayarak savaş gemisine yükseltebilirsin. Savaş gemisi korsana saldırabilir ve kalelere atak yapabilir.",
+      },
+      {
+        heading: "Kale fethi",
+        body:
+          "Kalelerin 3 canı vardır. Kaleye komşu savaş geminle saldırırsın: aldığın 6 ile rakibin 6'sı arasında zar atılır, kazanırsan kaleden 1 can düşer. Cana 0 inince kale senin olur ve +2 GP kazanırsın.",
+      },
+      {
+        heading: "Altın hex",
+        body:
+          "İki ada arasında bir altın damarı var; üzerinde sayı atıldığında komşu oyuncu istediği kaynağı seçer.",
+      },
+    ],
   },
 };
 

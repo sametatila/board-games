@@ -10,6 +10,7 @@ import {
 } from "@/lib/stats";
 import { MAP_TEMPLATES } from "@/game/mapTemplates";
 import type { MapTemplateId } from "@/game/types";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 const DIFFICULTY_LABEL: Record<string, string> = {
   easy: "Kolay",
@@ -35,6 +36,7 @@ export default function StatsPage() {
   // Load records on mount and re-load whenever the window regains focus
   // (the user might have just finished a game in another tab).
   const [records, setRecords] = useState<GameRecord[]>([]);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     setRecords(loadAllRecords());
@@ -75,8 +77,15 @@ export default function StatsPage() {
             </Link>
             {records.length > 0 && (
               <button
-                onClick={() => {
-                  if (window.confirm("Tüm istatistikler silinsin mi?")) {
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: "İstatistikleri sil?",
+                    body: "Bu cihazdaki tüm oyun kayıtların kalıcı olarak silinir. Bu işlem geri alınamaz.",
+                    confirmLabel: "Evet, sil",
+                    cancelLabel: "Vazgeç",
+                    tone: "danger",
+                  });
+                  if (ok) {
                     clearAllRecords();
                     setRecords([]);
                   }
@@ -232,7 +241,7 @@ export default function StatsPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-white/50">
-                      <span>{r.vp} VP</span>
+                      <span>{r.vp} GP</span>
                       <span>{formatDate(r.finishedAt)}</span>
                     </div>
                   </div>
@@ -242,6 +251,7 @@ export default function StatsPage() {
           </>
         )}
       </div>
+      {confirmDialog}
     </main>
   );
 }

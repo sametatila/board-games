@@ -430,6 +430,42 @@ export default class GameRoom implements Party.Server {
         break;
       }
 
+      case "set_color": {
+        const playerId = this.conns.get(sender.id);
+        const player = this.state.players.find((p) => p.id === playerId);
+        if (!player) return;
+        // Only allowed in the lobby — once the game starts, colour
+        // changes would mess up board pieces.
+        if (this.state.phase !== "lobby") {
+          send(sender, {
+            t: "error",
+            code: "not_allowed",
+            message: "Renk sadece lobby'de değiştirilebilir.",
+          });
+          return;
+        }
+        // Reject if another connected player already owns the colour.
+        const taken = this.state.players.some(
+          (p) => p.id !== player.id && p.color === msg.color,
+        );
+        if (taken) {
+          send(sender, {
+            t: "error",
+            code: "color_taken",
+            message: "Bu rengi başka bir oyuncu seçmiş.",
+          });
+          return;
+        }
+        if (!COLOR_POOL.includes(msg.color)) return;
+        player.color = msg.color;
+        events.push({
+          kind: "log",
+          text: `${player.nickname} rengi ${msg.color} olarak değiştirdi.`,
+          playerId: player.id,
+        });
+        break;
+      }
+
       case "set_settings": {
         const playerId = this.conns.get(sender.id);
         const player = this.state.players.find((p) => p.id === playerId);
@@ -447,7 +483,54 @@ export default class GameRoom implements Party.Server {
         next.turnTimerSec = clampTimer(next.turnTimerSec);
         next.tradeTimerSec = clampTimer(next.tradeTimerSec);
         next.discardTimerSec = clampTimer(next.discardTimerSec);
+        // VP target: null/undefined = use template default; otherwise
+        // clamp to the same 3..20 range the client UI enforces so a
+        // bad payload can't make the game unwinnable.
+        if (next.victoryPointsToWin != null) {
+          const v = Math.floor(Number(next.victoryPointsToWin));
+          if (!Number.isFinite(v) || v < 3) next.victoryPointsToWin = 3;
+          else if (v > 20) next.victoryPointsToWin = 20;
+          else next.victoryPointsToWin = v;
+        }
+        const vpChanged =
+          (next.victoryPointsToWin ?? null) !==
+          (this.state.settings.victoryPointsToWin ?? null);
         this.state.settings = next;
+
+        // Mid-game VP override: rules.victoryPointsToWin is what the
+        // reducer's win check reads, so push the new target there too.
+        // If the host clears the override during a game we keep the
+        // existing rules.victoryPointsToWin (no good way to recompute
+        // the template default + scaling without restarting the game).
+        if (vpChanged && this.state.phase !== "lobby") {
+          if (next.victoryPointsToWin != null) {
+            this.state.rules.victoryPointsToWin = next.victoryPointsToWin;
+            events.push({
+              kind: "log",
+              text: `Galibiyet puanı hedefi ${next.victoryPointsToWin} olarak güncellendi.`,
+            });
+            // If anyone has already crossed the new threshold, end the
+            // game immediately so the new target actually takes effect.
+            for (const p of this.state.players) {
+              const total =
+                p.victoryPoints + (p.hiddenVictoryPoints ?? 0);
+              if (total >= next.victoryPointsToWin) {
+                this.state.phase = "finished";
+                this.state.winnerId = p.id;
+                events.push({
+                  kind: "phase_changed",
+                  phase: this.state.phase,
+                });
+                events.push({
+                  kind: "log",
+                  text: `${p.nickname} yeni hedefe ulaşmış durumda — oyun bitti!`,
+                  playerId: p.id,
+                });
+                break;
+              }
+            }
+          }
+        }
         // If trades just got disabled and one is open, cancel it now.
         if (!next.allowPlayerTrades && this.state.pendingTrade) {
           this.state.pendingTrade = null;
@@ -525,7 +608,10 @@ export default class GameRoom implements Party.Server {
       }
 
       case "leave": {
-        this.handleDisconnect(sender, events);
+        // Explicit leave is a stronger signal than a socket close —
+        // the player actively asked to exit, so in lobby we DO drop
+        // them and (if needed) hand off the host badge.
+        this.handleDisconnect(sender, events, /* explicitLeave */ true);
         break;
       }
 
@@ -578,7 +664,11 @@ export default class GameRoom implements Party.Server {
     }
   }
 
-  handleDisconnect(conn: Party.Connection, events: ServerEvent[]) {
+  handleDisconnect(
+    conn: Party.Connection,
+    events: ServerEvent[],
+    explicitLeave = false,
+  ) {
     const playerId = this.conns.get(conn.id);
     this.conns.delete(conn.id);
     if (!playerId) return;
@@ -586,8 +676,13 @@ export default class GameRoom implements Party.Server {
     if (!player) return;
     player.connected = false;
 
-    // In lobby, fully remove disconnected players.
-    if (this.state.phase === "lobby") {
+    // Page refreshes look like a socket close to the server, but the
+    // player will reconnect within a second or two. Tearing them out of
+    // the roster (and worse, handing off the host badge) on every
+    // refresh creates a confusing jumpy lobby. So a plain socket close
+    // just marks the player offline; we only drop them when they
+    // explicitly ask to leave (button-press, returning to lobby, etc.).
+    if (this.state.phase === "lobby" && explicitLeave) {
       this.state.players = this.state.players.filter((p) => p.id !== playerId);
       this.state.turnOrder = this.state.turnOrder.filter((id) => id !== playerId);
       events.push({ kind: "player_left", playerId });
@@ -595,12 +690,16 @@ export default class GameRoom implements Party.Server {
         kind: "log",
         text: `${player.nickname} ayrıldı.`,
       });
-      // Promote new host if needed.
+      // If the host left, hand the badge to the next still-connected
+      // player so the lobby isn't stuck without one.
       if (player.isHost && this.state.players.length > 0) {
-        this.state.players[0].isHost = true;
+        const nextHost =
+          this.state.players.find((p) => p.connected) ??
+          this.state.players[0];
+        nextHost.isHost = true;
         events.push({
           kind: "host_changed",
-          playerId: this.state.players[0].id,
+          playerId: nextHost.id,
         });
       }
     } else {

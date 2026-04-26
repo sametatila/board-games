@@ -345,6 +345,24 @@ const DEV_CARD_DESC_TR: Record<DevelopmentCard, string> = {
   victory_point: "+1 galibiyet puanı",
 };
 
+// Full hover-tooltip text for each dev card. The short DEV_CARD_DESC_TR
+// is what we print on the card face; this longer version shows on hover
+// so the player gets the full rules without consulting a manual.
+const DEV_CARD_LONG_DESC_TR: Record<DevelopmentCard, string> = {
+  knight:
+    "Hırsızı istediğin bir hex'e taşır ve o hex'in komşusu olan bir oyuncudan rastgele bir kaynak çalarsın. 3 şövalye oynayan oyuncu En Büyük Ordu (+2 PD) bonusunu alır.",
+  road_building:
+    "Bu turda 2 yolu (veya gemiyi) ücretsiz inşa edersin. İnşa kuralları normal: kendi yapın veya yol/gemine bağlı olmalı.",
+  year_of_plenty:
+    "Bankadan istediğin 2 kaynağı al — istersen aynı türden 2, istersen iki farklı kaynak. Banka boşsa o tür alınamaz.",
+  monopoly:
+    "Bir kaynak türü seç. Tüm rakipler ellerindeki o kaynak kartlarını sana verir.",
+  victory_point:
+    "Saklı +1 galibiyet puanı. Sadece kazandığın anda açılır; rakiplerin görmez.",
+};
+
+export { DEV_CARD_LONG_DESC_TR };
+
 const DEV_CARD_FRAME: Record<DevelopmentCard, string> = {
   knight: "#a02a2a",
   road_building: "#2a6b3a",

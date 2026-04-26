@@ -406,9 +406,10 @@ function generatePorts(hexes: Hex[], rng: () => number): Port[] {
     allocations.set(isl.id, (allocations.get(isl.id) ?? 0) + extra);
   }
 
-  // Vertices already used by any port — shared across islands so two
-  // islands sitting close together can't put ports on the same corner.
+  // State shared across islands so adjacent islands can't pack ports
+  // around the same corner / channel.
   const usedVertices = new Set<string>();
+  const portedHexIds = new Set<string>(); // hexes that already host a port
   const allEdges: { edgeId: string }[] = [];
 
   for (const isl of eligibleIslands) {
@@ -428,10 +429,14 @@ function generatePorts(hexes: Hex[], rng: () => number): Port[] {
     cx /= islandHexes.length;
     cz /= islandHexes.length;
 
-    // Coastal edges of THIS island. An edge is coastal when its outside
-    // neighbor is missing or water, OR belongs to a different island.
+    // Coastal edges of THIS island. An edge is coastal ONLY when its
+    // outside neighbor is missing entirely OR is open water (sea/fog).
+    // An edge whose neighbor is a different island is *not* coastal —
+    // putting a port there would point inland toward the other island,
+    // which is the bug the user reported.
     const boundary: {
       edgeId: string;
+      hexId: string;
       angle: number;
       vertices: string[];
     }[] = [];
@@ -442,8 +447,26 @@ function generatePorts(hexes: Hex[], rng: () => number): Port[] {
           r: h.coord.r + [0, -1, -1, 0, 1, 1][s],
         };
         const nbHex = hexByKey.get(hexKey(nb));
-        const sameIsland = nbHex && islandHexIds.has(nbHex.id);
-        if (sameIsland) continue; // interior edge
+        // Strictly open water: missing OR sea/fog. Any land neighbour
+        // (same island OR a different island) disqualifies the edge.
+        const isOpenWater =
+          !nbHex || nbHex.terrain === "sea" || nbHex.terrain === "fog";
+        if (!isOpenWater) continue;
+        // Reject inland nooks: if the same hex has a *land* neighbour
+        // adjacent to this side on either flank, the edge is inside a
+        // narrow channel between islands and looks bad with a port. We
+        // require both flanking sides (s±1) to also be water-or-missing
+        // for at least one of them, i.e. a true open coast.
+        const flank = (delta: number) => {
+          const fs = (s + delta + 6) % 6;
+          const fnb = {
+            q: h.coord.q + [1, 1, 0, -1, -1, 0][fs],
+            r: h.coord.r + [0, -1, -1, 0, 1, 1][fs],
+          };
+          const fH = hexByKey.get(hexKey(fnb));
+          return !fH || fH.terrain === "sea" || fH.terrain === "fog";
+        };
+        if (!flank(-1) && !flank(1)) continue; // jammed between two lands
         const eId = hexEdgeIds(h.coord)[s];
         const hexPx = axialToPixel(h.coord, 1);
         const nbPx = axialToPixel(nb, 1);
@@ -451,37 +474,76 @@ function generatePorts(hexes: Hex[], rng: () => number): Port[] {
         const mz = (hexPx.y + nbPx.y) / 2;
         const angle = Math.atan2(mz - cz, mx - cx);
         const vs = edgeEndpointVertices(h.coord, s);
-        boundary.push({ edgeId: eId, angle, vertices: [vs[0], vs[1]] });
+        boundary.push({
+          edgeId: eId,
+          hexId: h.id,
+          angle,
+          vertices: [vs[0], vs[1]],
+        });
       }
     }
     if (boundary.length === 0) continue;
     boundary.sort((a, b) => a.angle - b.angle);
 
-    // Even stride along this island's perimeter, with a random start
-    // offset for variety. Skip an edge if either of its vertices was
-    // already taken by a previous port (on this or another island).
-    const want = Math.min(target, Math.floor(boundary.length / 2));
+    // Catan rule of thumb: ports are spaced so consecutive ports never
+    // share a vertex AND never sit on adjacent coastal hexes. We walk
+    // the perimeter at an even stride and skip any candidate that
+    // violates either constraint. Because the perimeter is a closed
+    // loop, we may need to retry from a small angular offset to land
+    // the requested count, but we never loosen the spacing rule.
+    const want = Math.min(target, Math.floor(boundary.length / 3));
     if (want <= 0) continue;
+    // Map hexId -> set of coastal-neighbor hexIds (hexes whose own
+    // coastal edges share a vertex with this hex's coastal edge).
+    const coastalHexNeighbors = new Map<string, Set<string>>();
+    for (const e of boundary) {
+      const set = coastalHexNeighbors.get(e.hexId) ?? new Set();
+      set.add(e.hexId);
+      for (const other of boundary) {
+        if (other.hexId === e.hexId) continue;
+        const sharesVertex =
+          e.vertices[0] === other.vertices[0] ||
+          e.vertices[0] === other.vertices[1] ||
+          e.vertices[1] === other.vertices[0] ||
+          e.vertices[1] === other.vertices[1];
+        if (sharesVertex) set.add(other.hexId);
+      }
+      coastalHexNeighbors.set(e.hexId, set);
+    }
     const baseStride = boundary.length / want;
     const startOffset = Math.floor(rng() * boundary.length);
     let placed = 0;
     let attempts = 0;
-    while (placed < want && attempts < boundary.length * 2) {
+    const seenIdx = new Set<number>();
+    while (placed < want && attempts < boundary.length * 4) {
       const idx =
         (startOffset + Math.round(placed * baseStride) + attempts) %
         boundary.length;
+      attempts += 1;
+      if (seenIdx.has(idx)) continue;
       const e = boundary[idx];
-      const conflict =
+      // Reject if this port would touch any vertex used by another
+      // port (cross-island), OR sit on a coastal hex adjacent to one
+      // that already hosts a port (same-island spacing).
+      const vertexConflict =
         usedVertices.has(e.vertices[0]) || usedVertices.has(e.vertices[1]);
-      if (!conflict) {
-        usedVertices.add(e.vertices[0]);
-        usedVertices.add(e.vertices[1]);
-        allEdges.push({ edgeId: e.edgeId });
-        placed += 1;
-        attempts = 0;
-      } else {
-        attempts += 1;
+      if (vertexConflict) continue;
+      const neighbors = coastalHexNeighbors.get(e.hexId) ?? new Set();
+      let neighborConflict = false;
+      for (const nbHexId of neighbors) {
+        if (portedHexIds.has(nbHexId)) {
+          neighborConflict = true;
+          break;
+        }
       }
+      if (neighborConflict) continue;
+      seenIdx.add(idx);
+      usedVertices.add(e.vertices[0]);
+      usedVertices.add(e.vertices[1]);
+      portedHexIds.add(e.hexId);
+      allEdges.push({ edgeId: e.edgeId });
+      placed += 1;
+      attempts = 0;
     }
   }
 

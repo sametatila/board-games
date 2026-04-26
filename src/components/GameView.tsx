@@ -5,7 +5,13 @@ import { motion } from "framer-motion";
 import { gsap } from "gsap";
 import { Board3D, type PlacementMode } from "./Board3D";
 import { DiceModal } from "./DiceModal";
-import { ResourceCard, DevCard } from "./CardArt";
+import {
+  ResourceCard,
+  DevCard,
+  DEV_CARD_NAMES_TR,
+  DEV_CARD_LONG_DESC_TR,
+} from "./CardArt";
+import { Tooltip, TitledTooltip } from "./Tooltip";
 import { sfx, isMuted, setMuted } from "@/lib/sfx";
 import { recordGame } from "@/lib/stats";
 import { useGameStore } from "@/lib/store";
@@ -26,7 +32,7 @@ import {
 const RESOURCE_ICONS: Record<Resource, string> = {
   wood: "🌲",
   brick: "🧱",
-  wheat: "🌾",
+  wheat: "🍞",
   sheep: "🐑",
   ore: "⛏️",
 };
@@ -100,13 +106,22 @@ export function GameView({
     return () => window.removeEventListener("pointerdown", track);
   }, []);
 
-  // When server-side diceRoll changes (i.e. a new roll happened), show the modal.
+  // When server-side diceRoll changes (i.e. a new roll happened), show the
+  // modal. On first mount we silently absorb whatever roll is already in
+  // the snapshot — otherwise refreshing the page or coming back from the
+  // lobby would replay the previous turn's animation.
   useEffect(() => {
     if (!state.diceRoll) {
       lastSeenRollRef.current = null;
       return;
     }
     const key = `${state.diceRoll[0]},${state.diceRoll[1]},${state.currentPlayerIndex}`;
+    // First snapshot of this session: remember the key but DON'T play
+    // the animation. Only subsequent dice changes count as "new rolls".
+    if (lastSeenRollRef.current === null) {
+      lastSeenRollRef.current = key;
+      return;
+    }
     if (lastSeenRollRef.current === key) return;
     lastSeenRollRef.current = key;
     setDiceModalRoll(state.diceRoll);
@@ -550,6 +565,34 @@ export function GameView({
           me={me}
           hoveredCost={hoveredCost}
           flyingCards={flyingCards}
+          devActions={{
+            canPlayKnight:
+              isMyTurn &&
+              state.phase === "playing" &&
+              !me.hasPlayedDevThisTurn &&
+              (state.subPhase === "main" || state.subPhase === "awaiting_roll"),
+            canPlayDev:
+              isMyTurn &&
+              state.phase === "playing" &&
+              !me.hasPlayedDevThisTurn &&
+              state.subPhase === "main",
+            activeKind:
+              placementMode === "knight_robber"
+                ? "knight"
+                : placementMode === "road_building"
+                ? "road_building"
+                : null,
+            onKnight: () =>
+              setPlacementMode(
+                placementMode === "knight_robber" ? null : "knight_robber",
+              ),
+            onRoadBuilding: () =>
+              setPlacementMode(
+                placementMode === "road_building" ? null : "road_building",
+              ),
+            onYearOfPlenty: () => setYopModalOpen(true),
+            onMonopoly: () => setMonoModalOpen(true),
+          }}
         />
       )}
     </div>
@@ -952,6 +995,7 @@ function ActionBar({
     color: "emerald" | "indigo" | "amber" | "slate" = "slate",
     active = false,
     cost?: Partial<Record<Resource, number>>,
+    tooltip?: string,
   ) {
     const base =
       "rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
@@ -963,7 +1007,7 @@ function ActionBar({
           amber: "bg-amber-500 hover:bg-amber-400 text-slate-900",
           slate: "bg-slate-700 hover:bg-slate-600 text-white",
         }[color];
-    return (
+    const buttonEl = (
       <button
         onClick={onClick}
         disabled={!enabled}
@@ -975,6 +1019,12 @@ function ActionBar({
       >
         {label}
       </button>
+    );
+    if (!tooltip) return buttonEl;
+    return (
+      <Tooltip label={tooltip} side="top" align="center" width={240}>
+        {buttonEl}
+      </Tooltip>
     );
   }
 
@@ -988,25 +1038,9 @@ function ActionBar({
     return out;
   }
 
-  const availDevs = me.devCards.available;
-  const knightCount = availDevs.filter((c) => c === "knight").length;
-  const rbCount = availDevs.filter((c) => c === "road_building").length;
-  const yopCount = availDevs.filter((c) => c === "year_of_plenty").length;
-  const monoCount = availDevs.filter((c) => c === "monopoly").length;
-  const vpCount = me.devCards.played.length === 0
-    ? availDevs.filter((c) => c === "victory_point").length
-    : 0;
-  const pendingCount = me.devCards.pendingFromTurn.length;
-  const canPlayDev =
-    isMyTurn &&
-    state.phase === "playing" &&
-    !me.hasPlayedDevThisTurn &&
-    state.subPhase === "main";
-  const canPlayKnight =
-    isMyTurn &&
-    state.phase === "playing" &&
-    !me.hasPlayedDevThisTurn &&
-    (state.subPhase === "main" || state.subPhase === "awaiting_roll");
+  // (Dev card counts and play conditions moved to GameView's HandFan
+  // call so they can drive both the inline play actions and the
+  // bottom-right hand display from a single source of truth.)
 
   return (
     <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-900/60 p-3">
@@ -1018,9 +1052,12 @@ function ActionBar({
           () => sendAction({ type: "ROLL_DICE", playerId: me.id }),
           canRoll,
           "emerald",
+          false,
+          undefined,
+          "Sırada iki zar at. 7 atılırsa hırsız hareket eder ve 7'den fazla kart tutan herkes elini yarıya indirir; diğer sayılar o numaralı hex'lerin komşu yerleşim/şehirlerine kaynak verir.",
         )}
         {btn(
-          "🛖 Yerleşim (1🌲 1🧱 1🌾 1🐑)",
+          "🛖 Yerleşim (1🌲 1🧱 1🍞 1🐑)",
           () =>
             setPlacementMode(
               placementMode === "settlement" ? null : "settlement",
@@ -1029,14 +1066,16 @@ function ActionBar({
           "indigo",
           placementMode === "settlement",
           BUILD_COSTS.settlement,
+          "Yeni yerleşim kur. Köşede en az iki yol/gemi mesafesinde olmalı, mevcut yapın bağlantısı şart. Her yerleşim 1 GP.",
         )}
         {btn(
-          "🏰 Şehir (2🌾 3⛏)",
+          "🏰 Şehir (2🍞 3⛏)",
           () => setPlacementMode(placementMode === "city" ? null : "city"),
           canBuild && canAffordCity && hasUpgradeableSettlement,
           "indigo",
           placementMode === "city",
           BUILD_COSTS.city,
+          "Mevcut yerleşimini şehre yükselt. Şehir o köşeden iki kat kaynak üretir ve 2 GP değerindedir.",
         )}
         {btn(
           "🛤 Yol (1🌲 1🧱)",
@@ -1045,6 +1084,7 @@ function ActionBar({
           "indigo",
           placementMode === "road",
           BUILD_COSTS.road,
+          "Yol inşa et. Mevcut yol/yerleşim bağlantısı olmalı. 5+ ardışık yol En Uzun Yol bonusunu (+2 GP) verir.",
         )}
         {shipsAllowed &&
           btn(
@@ -1054,6 +1094,7 @@ function ActionBar({
             "indigo",
             placementMode === "ship",
             BUILD_COSTS.ship,
+            "Deniz kenarına gemi inşa et. Gemiler yollar gibi adaları köprüler ve En Uzun Rota bonusuna sayılır.",
           )}
         {shipsAllowed &&
           state.pieces.some(
@@ -1076,6 +1117,8 @@ function ActionBar({
             "slate",
             placementMode === "move_ship_select" ||
               placementMode === "move_ship_target",
+            undefined,
+            "Zincirin son ucundaki bir gemiyi başka bir geçerli kenara taşı. Sırada bir gemi taşıyabilirsin (bu turda inşa ettiğin gemi taşınamaz).",
           )}
         {shipsAllowed &&
           state.pieces.some(
@@ -1091,6 +1134,8 @@ function ActionBar({
             canBuild && !me.hasPlayedDevThisTurn,
             "amber",
             placementMode === "warship_upgrade",
+            undefined,
+            "1 Şövalye kartını harcayarak normal gemini savaş gemisine yükselt. Savaş gemisi korsana saldırabilir ve kale fethedebilir.",
           )}
         {/* Pirate Islands: attack a fortress if you have a warship adjacent
             to one and the fortress isn't already yours. We render a button
@@ -1135,9 +1180,17 @@ function ActionBar({
               ⚔️ Kale saldır ({f.hpRemaining}/3)
             </button>
           ))}
-        {btn("🤝 Ticaret", openTrade, canBuild, "indigo")}
         {btn(
-          "🎴 Kart al (1🌾 1🐑 1⛏)",
+          "🤝 Ticaret",
+          openTrade,
+          canBuild,
+          "indigo",
+          false,
+          undefined,
+          "Diğer oyuncularla veya bankayla kaynak takası yap. Bankada 4:1, kaynak limanında 2:1, genel limanda 3:1.",
+        )}
+        {btn(
+          "🎴 Kart al (1🍞 1🐑 1⛏)",
           () => {
             sendAction({ type: "BUY_DEV_CARD", playerId: me.id });
             flyCards(costToFlyList(DEV_CARD_COST));
@@ -1146,87 +1199,22 @@ function ActionBar({
           "indigo",
           false,
           DEV_CARD_COST,
+          "Desteden rastgele bir gelişme kartı çek. Kart o turda oynanamaz; sıra başına en fazla 1 gelişme kartı oynanır.",
         )}
         {btn(
           "Sırayı bitir →",
           () => sendAction({ type: "END_TURN", playerId: me.id }),
           canEndTurn,
           "amber",
+          false,
+          undefined,
+          "Sıranı tamamla ve sonraki oyuncuya geç. Zar atılmadıysa bitiremezsin.",
         )}
       </div>
 
-      {/* Dev cards row */}
-      {(availDevs.length > 0 || pendingCount > 0 || vpCount > 0) && (
-        <div className="flex flex-wrap items-end gap-2 border-t border-white/10 pt-2">
-          <span className="self-center text-xs uppercase tracking-wider text-white/40">
-            Gelişme kartların:
-          </span>
-          {knightCount > 0 && (
-            <DevCardButton
-              kind="knight"
-              count={knightCount}
-              enabled={canPlayKnight}
-              active={placementMode === "knight_robber"}
-              onClick={() =>
-                setPlacementMode(
-                  placementMode === "knight_robber" ? null : "knight_robber",
-                )
-              }
-            />
-          )}
-          {rbCount > 0 && (
-            <DevCardButton
-              kind="road_building"
-              count={rbCount}
-              enabled={canPlayDev}
-              active={placementMode === "road_building"}
-              progressLabel={
-                placementMode === "road_building"
-                  ? `${pendingRoadBuilding.length}/2 seçildi`
-                  : undefined
-              }
-              onClick={() =>
-                setPlacementMode(
-                  placementMode === "road_building" ? null : "road_building",
-                )
-              }
-            />
-          )}
-          {yopCount > 0 && (
-            <DevCardButton
-              kind="year_of_plenty"
-              count={yopCount}
-              enabled={canPlayDev}
-              onClick={openYop}
-            />
-          )}
-          {monoCount > 0 && (
-            <DevCardButton
-              kind="monopoly"
-              count={monoCount}
-              enabled={canPlayDev}
-              onClick={openMono}
-            />
-          )}
-          {vpCount > 0 && (
-            <DevCard kind="victory_point" count={vpCount} width={48} height={70} />
-          )}
-          {pendingCount > 0 && (
-            <div className="flex items-end gap-1">
-              {me.devCards.pendingFromTurn.map((c, i) => (
-                <DevCard
-                  key={`p${i}`}
-                  kind={c}
-                  pending
-                  width={42}
-                  height={62}
-                  showCount={false}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Dev cards now live in the bottom-right hand alongside resource
+          cards — see HandFan. The dedicated panel was removed so the
+          action bar stays compact. */}
 
       {inSetup && (
         <p className="text-xs text-white/60">
@@ -1257,7 +1245,7 @@ function DevCardButton({
   onClick: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="group relative flex flex-col items-center gap-1">
       <button
         onClick={onClick}
         disabled={!enabled}
@@ -1279,6 +1267,14 @@ function DevCardButton({
           {progressLabel}
         </span>
       )}
+      {/* Hover tooltip with the full card description. Pointer-events
+          are off so the tooltip can't trap clicks meant for the card. */}
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-48 -translate-x-1/2 rounded-lg border border-white/15 bg-slate-950/95 px-3 py-2 text-[11px] leading-snug text-white shadow-xl backdrop-blur group-hover:block">
+        <div className="mb-1 text-xs font-semibold text-amber-200">
+          {DEV_CARD_NAMES_TR[kind]}
+        </div>
+        <div className="text-white/85">{DEV_CARD_LONG_DESC_TR[kind]}</div>
+      </div>
     </div>
   );
 }
@@ -1291,10 +1287,23 @@ function HandFan({
   me,
   hoveredCost,
   flyingCards,
+  devActions,
 }: {
   me: Player;
   hoveredCost?: Partial<Record<Resource, number>> | null;
   flyingCards?: Resource[];
+  // Optional: clicking a playable dev card triggers the matching action.
+  // Provided by GameView when it's the player's turn AND they haven't
+  // already played a dev card this turn.
+  devActions?: {
+    canPlayKnight: boolean;
+    canPlayDev: boolean;
+    activeKind: "knight" | "road_building" | null;
+    onKnight: () => void;
+    onRoadBuilding: () => void;
+    onYearOfPlenty: () => void;
+    onMonopoly: () => void;
+  };
 }) {
   // One stack per kind, but only kinds the player actually has.
   const stacks = HAND_ORDER.filter((r) => (me.resources[r] ?? 0) > 0).map(
@@ -1320,8 +1329,23 @@ function HandFan({
   // Kinds that should play the fly-off animation right now.
   const flyingKinds = new Set<Resource>(flyingCards ?? []);
 
-  if (totalCardCount === 0) {
-    // 5 faded placeholders for layout consistency before the player has any cards.
+  // Dev cards: aggregate by kind so the hand shows e.g. "Knight ×3" as
+  // a single stack. Pending cards (just-bought, can't play this turn)
+  // are kept separate so they render greyed out.
+  const devCounts: Record<string, number> = {};
+  for (const k of me.devCards.available) {
+    devCounts[k] = (devCounts[k] ?? 0) + 1;
+  }
+  const vpCount = me.hiddenVictoryPoints ?? 0;
+  const devStacks: { kind: import("@/game/types").DevelopmentCard; count: number }[] = [];
+  for (const k of ["knight", "road_building", "year_of_plenty", "monopoly"] as const) {
+    if ((devCounts[k] ?? 0) > 0) devStacks.push({ kind: k, count: devCounts[k] });
+  }
+  if (vpCount > 0) devStacks.push({ kind: "victory_point", count: vpCount });
+  const pendingDev = me.devCards.pendingFromTurn ?? [];
+
+  const totalAll = totalCardCount + devStacks.length + pendingDev.length;
+  if (totalAll === 0) {
     return (
       <div className="pointer-events-none fixed bottom-3 right-4 z-20 flex items-end gap-1">
         {HAND_ORDER.map((r) => (
@@ -1334,35 +1358,165 @@ function HandFan({
     );
   }
 
-  // Light fan rotation across the visible stacks (not per-card).
-  const maxFan = Math.min(0.35, stacks.length * 0.08);
+  // Build a single deck of items (resources + dev cards + pending dev
+  // cards) that share one fan rotation. The order matters visually:
+  // resources on the left in HAND_ORDER, then playable dev cards, then
+  // greyed-out pending dev cards.
+  type FanItem =
+    | { type: "resource"; kind: Resource; count: number }
+    | {
+        type: "dev";
+        kind: import("@/game/types").DevelopmentCard;
+        count: number;
+        playable: boolean;
+        active: boolean;
+        onClick?: () => void;
+      }
+    | {
+        type: "dev_pending";
+        kind: import("@/game/types").DevelopmentCard;
+      };
+
+  // Order: dev cards (and pending dev) on the LEFT, resources on the
+  // RIGHT. The fan rotation lifts left-most cards higher, so the dev
+  // tooltip can grow up and to the right without leaving the viewport.
+  const items: FanItem[] = [
+    ...pendingDev.map((c) => ({ type: "dev_pending" as const, kind: c })),
+    ...devStacks.map((d) => {
+      const playable =
+        !!devActions &&
+        d.kind !== "victory_point" &&
+        (d.kind === "knight" ? devActions.canPlayKnight : devActions.canPlayDev);
+      const active =
+        !!devActions &&
+        devActions.activeKind !== null &&
+        devActions.activeKind === (d.kind as typeof devActions.activeKind);
+      const onClick = () => {
+        if (!devActions || !playable) return;
+        if (d.kind === "knight") devActions.onKnight();
+        else if (d.kind === "road_building") devActions.onRoadBuilding();
+        else if (d.kind === "year_of_plenty") devActions.onYearOfPlenty();
+        else if (d.kind === "monopoly") devActions.onMonopoly();
+      };
+      return {
+        type: "dev" as const,
+        kind: d.kind,
+        count: d.count,
+        playable,
+        active,
+        onClick,
+      };
+    }),
+    ...stacks.map((s) => ({
+      type: "resource" as const,
+      kind: s.kind,
+      count: s.count,
+    })),
+  ];
+
+  const maxFan = Math.min(0.35, items.length * 0.08);
 
   return (
-    <div className="pointer-events-none fixed bottom-0 right-6 z-20 select-none">
+    <div className="pointer-events-none fixed bottom-0 right-6 z-20 flex items-end gap-3 select-none">
       <div
         className="relative flex items-end justify-end"
         style={{
           height: 140,
-          width: Math.max(120, stacks.length * 56),
+          width: Math.max(120, items.length * 56),
           paddingRight: 20,
         }}
       >
-        {stacks.map((s, i) => {
-          const t = stacks.length === 1 ? 0.5 : i / (stacks.length - 1);
+        {items.map((it, i) => {
+          const t = items.length === 1 ? 0.5 : i / (items.length - 1);
           const angle = (-maxFan / 2 + t * maxFan) * (180 / Math.PI);
-          const xOffset = -((stacks.length - 1 - i) * 50);
+          const xOffset = -((items.length - 1 - i) * 50);
           const lift = Math.sin(t * Math.PI) * 6;
-          const highlighted = highlightedKinds.has(s.kind);
-          const flying = flyingKinds.has(s.kind);
+          const highlighted =
+            it.type === "resource" && highlightedKinds.has(it.kind);
+          const flying = it.type === "resource" && flyingKinds.has(it.kind);
+          const active = it.type === "dev" && it.active;
 
           const restingTransform = `translate(${xOffset}px, ${-lift}px) rotate(${angle}deg)`;
           const flyingTransform = `translate(${xOffset - 40}px, -240px) rotate(${angle - 18}deg) scale(0.7)`;
 
+          const cardEl =
+            it.type === "resource" ? (
+              <>
+                {it.count > 1 && (
+                  <div
+                    className="absolute right-0 top-0"
+                    style={{ transform: "translate(-4px, -4px)" }}
+                  >
+                    <ResourceCard
+                      kind={it.kind}
+                      width={56}
+                      height={84}
+                      showCount={false}
+                    />
+                  </div>
+                )}
+                {it.count > 2 && (
+                  <div
+                    className="absolute right-0 top-0"
+                    style={{ transform: "translate(-2px, -2px)" }}
+                  >
+                    <ResourceCard
+                      kind={it.kind}
+                      width={56}
+                      height={84}
+                      showCount={false}
+                    />
+                  </div>
+                )}
+                <ResourceCard
+                  kind={it.kind}
+                  count={it.count}
+                  highlighted={highlighted}
+                  width={56}
+                  height={84}
+                />
+              </>
+            ) : it.type === "dev" ? (
+              <TitledTooltip
+                title={DEV_CARD_NAMES_TR[it.kind]}
+                body={DEV_CARD_LONG_DESC_TR[it.kind]}
+                side="top"
+                align="start"
+                width={220}
+              >
+                <button
+                  type="button"
+                  onClick={it.onClick}
+                  disabled={!it.playable}
+                  className={`block rounded-md transition disabled:cursor-not-allowed ${
+                    it.playable && !it.active ? "hover:scale-[1.02]" : ""
+                  }`}
+                >
+                  <DevCard
+                    kind={it.kind}
+                    count={it.count}
+                    highlighted={it.active}
+                    width={56}
+                    height={84}
+                  />
+                </button>
+              </TitledTooltip>
+            ) : (
+              <DevCard
+                kind={it.kind}
+                pending
+                width={56}
+                height={84}
+                showCount={false}
+              />
+            );
+
           return (
             <div
-              key={s.kind}
-              data-card-kind={s.kind}
-              className={`pointer-events-auto absolute bottom-0 right-0 ease-out hover:z-30 hover:!translate-y-[-22px] hover:!scale-110 hover:!rotate-0 ${
+              key={`${it.type}-${
+                it.kind
+              }-${i}`}
+              className={`group pointer-events-auto absolute bottom-0 right-0 ease-out hover:z-30 hover:!translate-y-[-22px] hover:!scale-110 hover:!rotate-0 ${
                 flying
                   ? "transition-all duration-700"
                   : "transition-transform duration-200"
@@ -1373,40 +1527,10 @@ function HandFan({
                 opacity: flying ? 0 : 1,
               }}
             >
-              {/* Stack illusion: render up to 2 phantom cards behind the front one */}
-              {s.count > 1 && (
-                <div
-                  className="absolute right-0 top-0"
-                  style={{ transform: "translate(-4px, -4px)" }}
-                >
-                  <ResourceCard
-                    kind={s.kind}
-                    width={56}
-                    height={84}
-                    showCount={false}
-                  />
-                </div>
+              {cardEl}
+              {active && (
+                <div className="pointer-events-none absolute -inset-1 rounded-md ring-2 ring-amber-300/80" />
               )}
-              {s.count > 2 && (
-                <div
-                  className="absolute right-0 top-0"
-                  style={{ transform: "translate(-2px, -2px)" }}
-                >
-                  <ResourceCard
-                    kind={s.kind}
-                    width={56}
-                    height={84}
-                    showCount={false}
-                  />
-                </div>
-              )}
-              <ResourceCard
-                kind={s.kind}
-                count={s.count}
-                highlighted={highlighted}
-                width={56}
-                height={84}
-              />
             </div>
           );
         })}
@@ -1437,24 +1561,64 @@ export function PlayerScores({ state }: { state: GameState }) {
   const ordered = state.turnOrder
     .map((id) => state.players.find((p) => p.id === id))
     .filter((p): p is Player => !!p);
+  // Resolve who plays now and who plays next, using the current player's
+  // index in the turn order list (not the players list — those can drift
+  // when players join mid-lobby).
+  const currentPlayerId = state.players[state.currentPlayerIndex]?.id;
+  const currentIdx = ordered.findIndex((p) => p.id === currentPlayerId);
+  const nextIdx =
+    ordered.length > 0 && currentIdx >= 0
+      ? (currentIdx + 1) % ordered.length
+      : -1;
+  const showTurnIndicators =
+    state.phase === "playing" ||
+    state.phase === "setup_round_1" ||
+    state.phase === "setup_round_2";
   return (
     <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
-      <div className="mb-2 text-xs uppercase tracking-wider text-white/40">
-        Skorlar
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold tracking-wide text-white/50">
+          Skorlar
+        </span>
+        {showTurnIndicators && currentIdx >= 0 && (
+          <span className="text-[10px] tracking-wide text-emerald-300">
+            Sıra: {ordered[currentIdx].nickname}
+          </span>
+        )}
       </div>
       <ul className="space-y-2">
         {ordered.map((p, idx) => {
-          const isCurrent = state.players[state.currentPlayerIndex]?.id === p.id;
+          const isCurrent = idx === currentIdx;
+          const isNext = idx === nextIdx && currentIdx >= 0 && idx !== currentIdx;
           return (
             <li
               key={p.id}
               className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
                 isCurrent
-                  ? "bg-emerald-500/10 ring-1 ring-emerald-400/40"
+                  ? "bg-emerald-500/10 ring-1 ring-emerald-400/50"
+                  : isNext
+                  ? "bg-amber-500/5 ring-1 ring-amber-400/30"
                   : "bg-slate-950/40"
               }`}
             >
               <div className="flex items-center gap-2">
+                {/* Fixed-width slot keeps the ▶ and ⌛ glyphs aligned with
+                    the empty placeholder, regardless of how wide the
+                    underlying glyph happens to be in the user's font. */}
+                <span className="inline-flex h-4 w-4 items-center justify-center text-sm leading-none">
+                  {showTurnIndicators && isCurrent ? (
+                    <Tooltip
+                      label="Şu an bu oyuncunun sırası"
+                      width={180}
+                    >
+                      <span className="text-emerald-300">▶</span>
+                    </Tooltip>
+                  ) : showTurnIndicators && isNext ? (
+                    <Tooltip label="Sıradaki oyuncu" width={160}>
+                      <span className="text-amber-300/80">⌛</span>
+                    </Tooltip>
+                  ) : null}
+                </span>
                 <span
                   className="inline-block h-3 w-3 rounded-full"
                   style={{ backgroundColor: colorFor(p.color) }}
@@ -1463,18 +1627,57 @@ export function PlayerScores({ state }: { state: GameState }) {
                   {p.nickname}
                 </span>
                 {idx === 0 && state.phase === "lobby" && (
-                  <span className="text-[10px] uppercase tracking-wider text-amber-300">
-                    host
-                  </span>
+                  <Tooltip
+                    label="Odanın hostu — harita, zorluk, ayarlar ve oyunu başlatma yetkisi onda."
+                    width={220}
+                  >
+                    <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-200">
+                      host
+                    </span>
+                  </Tooltip>
+                )}
+                {showTurnIndicators && isCurrent && (
+                  <Tooltip
+                    label="Aktif oyuncu — zar atan, inşa eden ve sırayı bitirebilen tek oyuncu bu."
+                    width={220}
+                  >
+                    <span className="rounded bg-emerald-400/20 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-200">
+                      Sıra
+                    </span>
+                  </Tooltip>
+                )}
+                {showTurnIndicators && isNext && (
+                  <Tooltip
+                    label="Mevcut oyuncu sırayı bitirince sıra bu oyuncuya geçer."
+                    width={220}
+                  >
+                    <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-200">
+                      Sıradaki
+                    </span>
+                  </Tooltip>
                 )}
               </div>
               <div className="flex items-center gap-3 text-xs">
-                <span title="Galibiyet puanı" className="font-semibold">
-                  {p.victoryPoints} VP
-                </span>
-                <span className="text-white/50" title="Toplam kart">
-                  {Object.values(p.resources).reduce((a, b) => a + b, 0)} 🃏
-                </span>
+                <Tooltip
+                  label={`Galibiyet Puanı: yerleşim 1, şehir 2, en uzun yol/ordu 2, gizli kart 1. Hedefe ulaşan kazanır.`}
+                  side="top"
+                  align="end"
+                  width={240}
+                >
+                  <span className="font-semibold">
+                    {p.victoryPoints} GP
+                  </span>
+                </Tooltip>
+                <Tooltip
+                  label="Bu oyuncunun elindeki toplam kaynak kartı sayısı."
+                  side="top"
+                  align="end"
+                  width={200}
+                >
+                  <span className="text-white/50">
+                    {Object.values(p.resources).reduce((a, b) => a + b, 0)} 🃏
+                  </span>
+                </Tooltip>
               </div>
             </li>
           );
@@ -1505,7 +1708,7 @@ function YearOfPlentyModal({
     <ModalShell onClose={onClose}>
       <div>
         <h3 className="mb-1 text-center text-lg font-semibold text-white">
-          🌾 Bereket yılı — 2 kart seç
+          🍞 Bereket yılı — 2 kart seç
         </h3>
         <p className="mb-3 text-center text-xs text-white/60">
           Bankadan istediğin 2 kaynağı al (aynı kart x2 olabilir).
@@ -1656,16 +1859,17 @@ function TradeModal({
           <h3 className="text-lg font-semibold text-white">Ticaret</h3>
           <button
             onClick={onClose}
-            className="text-sm text-white/40 hover:text-white"
+            aria-label="Kapat"
+            className="rounded-md p-1 text-lg text-white/50 transition hover:bg-white/10 hover:text-white"
           >
-            ✕ Kapat
+            ✕
           </button>
         </div>
 
         {/* Pending trade view */}
         {trade && (
           <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/5 p-4">
-            <div className="mb-2 text-xs uppercase tracking-wider text-amber-300">
+            <div className="mb-2 text-xs font-semibold tracking-wide text-amber-300">
               Açık teklif
             </div>
             <PendingTradeView
@@ -1682,7 +1886,7 @@ function TradeModal({
         {!trade && isMyTurn && (
           <div className="mt-4 space-y-3">
             <div className="rounded-xl bg-slate-950/40 p-3">
-              <div className="mb-2 text-xs uppercase tracking-wider text-white/50">
+              <div className="mb-2 text-xs font-semibold tracking-wide text-white/60">
                 Vermek istediğin
               </div>
               <ResourcePicker
@@ -1693,13 +1897,14 @@ function TradeModal({
               />
             </div>
             <div className="rounded-xl bg-slate-950/40 p-3">
-              <div className="mb-2 text-xs uppercase tracking-wider text-white/50">
+              <div className="mb-2 text-xs font-semibold tracking-wide text-white/60">
                 Almak istediğin
               </div>
               <ResourcePicker
                 order={order}
                 values={receive}
                 onAdjust={(r, d) => adj(setReceive, receive, r, d, 99)}
+                showHand={me.resources}
               />
             </div>
             <button
@@ -1750,11 +1955,19 @@ function ResourcePicker({
   values,
   onAdjust,
   limits,
+  showHand,
 }: {
   order: Resource[];
   values: Record<Resource, number>;
   onAdjust: (r: Resource, delta: number) => void;
+  /** Caps the + button to the player's actual hand. Used by the
+   *  "Vermek istediğin" picker so they can't offer more than they own. */
   limits?: Record<Resource, number>;
+  /** Independent of `limits` — when provided, every column shows
+   *  "Elinde: N" under it as informational text. The "Almak istediğin"
+   *  picker passes this without `limits` so the player sees what they
+   *  already have without losing the ability to ask for more. */
+  showHand?: Record<Resource, number>;
 }) {
   return (
     <div className="flex flex-wrap gap-3">
@@ -1762,6 +1975,7 @@ function ResourcePicker({
         const count = values[r] ?? 0;
         const max = limits ? limits[r] : 99;
         const reachedMax = count >= max;
+        const handShown = showHand ?? limits;
         return (
           <div key={r} className="flex flex-col items-center gap-1.5">
             <div className={count === 0 ? "opacity-60" : ""}>
@@ -1789,8 +2003,10 @@ function ResourcePicker({
                 +
               </button>
             </div>
-            {limits && (
-              <span className="text-[10px] text-white/40">/{max}</span>
+            {handShown && (
+              <span className="text-[10px] text-white/50">
+                Elinde: {handShown[r] ?? 0}
+              </span>
             )}
           </div>
         );

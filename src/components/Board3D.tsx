@@ -3,11 +3,13 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, type ThreeEvent, useFrame } from "@react-three/fiber";
 import {
+  Billboard,
   ContactShadows,
   Environment,
-  Line,
   OrbitControls,
   Text,
+  useGLTF,
+  useTexture,
 } from "@react-three/drei";
 import * as THREE from "three";
 import {
@@ -62,9 +64,204 @@ export type Board3DProps = {
 };
 
 const HEX_SIZE = 1; // world units (radius of hexagon, point-to-center)
-const HEX_HEIGHT_LAND = 0.25;
-const HEX_HEIGHT_DESERT = 0.18;
+// Vertical offset of the *top face* of the dirt base hex in world space.
+// dirt.glb authored y_max = 0.10; with our √3 uniform scale that lands
+// the top face at y ≈ 0.173. Settlement/road/ship anchors rest at this
+// height so they sit on the surface; the painted sprite sits on top of
+// it (with a tiny bias to avoid z-fighting).
+const HEX_HEIGHT_LAND = 0.1 * Math.sqrt(3);
+const HEX_HEIGHT_DESERT = 0.1 * Math.sqrt(3);
 const HEX_HEIGHT_SEA = 0.05;
+
+// Kenney Hexagon Kit (CC0). All visual pieces — hex tiles, settlements,
+// cities, ships, roads, ports, decor — come from this pack so the board
+// looks like a real game instead of placeholder primitives. Models share
+// a single colormap.png atlas and are pre-baked at hex unit ≈ 1 world
+// unit, which lines up perfectly with our HEX_SIZE.
+const KIT = "/assets/hexagon-kit/Models/GLB%20format";
+const ASSET = {
+  // Flat 3D base under every painted hex sprite for genuine depth.
+  hex_base_dirt: `${KIT}/dirt.glb`,
+  // Sea hex tile — plain Kenney water with the kit's painted waves.
+  hex_water: `${KIT}/water.glb`,
+  // Player pieces — Kenney 3D models tinted to player colours.
+  unit_house: `${KIT}/unit-house.glb`,
+  unit_mansion: `${KIT}/unit-mansion.glb`,
+  unit_ship: `${KIT}/unit-ship.glb`,
+  unit_ship_large: `${KIT}/unit-ship-large.glb`,
+  // Roads and port structures.
+  path_straight: `${KIT}/path-straight.glb`,
+  building_dock: `${KIT}/building-dock.glb`,
+  building_tower: `${KIT}/building-tower.glb`,
+} as const;
+
+// Painted 2D sprite pack — used as the top face of every hex tile, plus
+// settlement / city / fortress / port / token sprites. Drawn isometric
+// but we lay them flat on the hex top so they read as decoration painted
+// onto the surface.
+const SPRITES = {
+  hex_wood: "/assets/sprites/hex-wood.png",
+  hex_brick: "/assets/sprites/hex-brick.png",
+  hex_wheat: "/assets/sprites/hex-weed.png",
+  hex_sheep: "/assets/sprites/hex-sheep.png",
+  hex_ore: "/assets/sprites/hex-rock.png",
+  hex_desert: "/assets/sprites/hex-dessert.png",
+  hex_gold: "/assets/sprites/hex-gold.png",
+  hex_fog: "/assets/sprites/hex-fog.png",
+  port_any: "/assets/sprites/10.png",
+  port_wood: "/assets/sprites/port-wood.png",
+  port_brick: "/assets/sprites/port-brick.png",
+  port_wheat: "/assets/sprites/port-weed.png",
+  port_sheep: "/assets/sprites/port-sheep.png",
+  port_ore: "/assets/sprites/port-rock.png",
+  pirate_castle: "/assets/sprites/pirate-castle.png",
+  thief: "/assets/sprites/thief.png",
+} as const;
+
+// Every sea-style tile uses the plain water mesh. The hex id argument
+// stays around in case we want to add scenic variants back later.
+function seaTileForHex(_hexId: string): string {
+  return ASSET.hex_water;
+}
+
+function spriteForTerrain(terrain: HexTerrain): string | null {
+  switch (terrain) {
+    case "wood": return SPRITES.hex_wood;
+    case "brick": return SPRITES.hex_brick;
+    case "wheat": return SPRITES.hex_wheat;
+    case "sheep": return SPRITES.hex_sheep;
+    case "ore": return SPRITES.hex_ore;
+    case "desert": return SPRITES.hex_desert;
+    case "gold": return SPRITES.hex_gold;
+    case "fog": return SPRITES.hex_fog;
+    // Sea hexes use the kit's 3D water tile, not a flat sprite.
+    case "sea": return null;
+  }
+}
+
+function spriteForPortKind(kind: string): string {
+  switch (kind) {
+    case "wood": return SPRITES.port_wood;
+    case "brick": return SPRITES.port_brick;
+    case "wheat": return SPRITES.port_wheat;
+    case "sheep": return SPRITES.port_sheep;
+    case "ore": return SPRITES.port_ore;
+    default: return SPRITES.port_any;
+  }
+}
+
+// Pre-warm GLB and sprite caches so the first time each asset appears
+// on screen it doesn't suspend mid-frame and disappear briefly.
+Object.values(ASSET).forEach((path) => useGLTF.preload(path));
+Object.values(SPRITES).forEach((path) => useTexture.preload(path));
+
+// (hexTileForTerrain / decorTopForTerrain / isBuildingTile removed —
+// hex tile rendering is now sprite-based on top of a flat dirt base.)
+
+// Loads a GLB and returns a *cloned* scene with its materials cloned so
+// per-instance tinting (player colours, gold sheen) doesn't leak across
+// other meshes that share the same atlas material. Returns the cloned
+// object and its local-space bounding box (untransformed) so callers can
+// reason about size and grounding.
+function useKenneyClone(
+  path: string,
+  tintColor?: string,
+): { object: THREE.Object3D; bbox: THREE.Box3 } {
+  const { scene } = useGLTF(path) as unknown as { scene: THREE.Group };
+  return useMemo(() => {
+    const root = scene.clone(true);
+    root.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const mat =
+        Array.isArray(obj.material)
+          ? obj.material.map((m) => m.clone())
+          : (obj.material as THREE.Material).clone();
+      obj.material = mat;
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      if (tintColor) {
+        const apply = (m: THREE.Material) => {
+          const std = m as THREE.MeshStandardMaterial;
+          if (std.color) std.color.set(tintColor);
+        };
+        if (Array.isArray(mat)) mat.forEach(apply);
+        else apply(mat);
+      }
+    });
+    root.updateMatrixWorld(true);
+    const bbox = new THREE.Box3().setFromObject(root);
+    return { object: root, bbox };
+  }, [scene, tintColor]);
+}
+
+function KenneyModel({
+  path,
+  position = [0, 0, 0],
+  rotation = [0, 0, 0],
+  scale = 1,
+  tintColor,
+  // When set, scale the model uniformly so its widest horizontal extent
+  // (max of x/z size in local space, AFTER `rotation`) matches `fitWidth`
+  // world units. This is the "fit to footprint" mode used to drop
+  // arbitrary Kenney pieces onto the hex grid without guessing scale
+  // factors. The rotation is applied to the bbox before measuring so a
+  // 30° flat→pointy-top rotation, for example, doesn't undersize the
+  // tile.
+  fitWidth,
+  // When true, lift the model so its lowest point sits exactly at y=0
+  // of the parent group, AFTER `rotation` and scale. Combined with
+  // positioning the parent at the hex top, this guarantees pieces rest
+  // on the surface instead of floating or sinking.
+  groundOnFloor = false,
+}: {
+  path: string;
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: number | [number, number, number];
+  tintColor?: string;
+  fitWidth?: number;
+  groundOnFloor?: boolean;
+}) {
+  const { object, bbox } = useKenneyClone(path, tintColor);
+
+  // Bounding box AFTER applying `rotation` (still in local units, scale=1).
+  // We need the rotated bbox for both fit-to-width and grounding so a
+  // tile rotated 30° around Y measures with its rotated footprint, not
+  // its authored footprint.
+  const rotatedBbox = useMemo(() => {
+    if (!bbox || bbox.isEmpty()) return null;
+    const m = new THREE.Matrix4().makeRotationFromEuler(
+      new THREE.Euler(rotation[0], rotation[1], rotation[2], "XYZ"),
+    );
+    return bbox.clone().applyMatrix4(m);
+  }, [bbox, rotation[0], rotation[1], rotation[2]]);
+
+  let effectiveScale: [number, number, number];
+  if (typeof fitWidth === "number" && rotatedBbox) {
+    const sx = rotatedBbox.max.x - rotatedBbox.min.x;
+    const sz = rotatedBbox.max.z - rotatedBbox.min.z;
+    const widest = Math.max(sx, sz) || 1;
+    const factor = fitWidth / widest;
+    effectiveScale = [factor, factor, factor];
+  } else {
+    effectiveScale =
+      typeof scale === "number" ? [scale, scale, scale] : scale;
+  }
+
+  // Vertical offset = -minY of rotated bbox, scaled by Y scale, so the
+  // model's lowest point lands exactly at y=0 in the parent group.
+  const groundLift = groundOnFloor && rotatedBbox
+    ? -rotatedBbox.min.y * effectiveScale[1]
+    : 0;
+
+  return (
+    <group position={[position[0], position[1] + groundLift, position[2]]}>
+      <group rotation={rotation} scale={effectiveScale}>
+        <primitive object={object} />
+      </group>
+    </group>
+  );
+}
 
 const TERRAIN_COLORS: Record<HexTerrain, string> = {
   wood: "#2f6b2a",
@@ -112,9 +309,12 @@ function hexCornersWorld(
   return corners;
 }
 
-// Hexes render as 6-sided Three.js cylinders. The cylinder's default vertex
-// placement gives flat top/bottom corners pointing away from / toward the
-// camera (pointy-top). No rotation needed.
+// Hex tile: a flat 3D dirt slab (Kenney) for thickness, a painted sprite
+// laid across its top face for the visual, and overlays (token, robber,
+// highlight) above. Sea hexes get *only* the click-catcher and the
+// procedural ocean plane underneath shows through. The sprite is on a
+// square plane sized to fit the hex's bounding rectangle; transparent
+// pixels around the painted hexagon shape vanish thanks to alphaTest.
 function HexTile({
   hex,
   onClick,
@@ -128,80 +328,85 @@ function HexTile({
 }) {
   const [pos] = useState(() => hexToWorld(hex.coord));
   const isLand = hex.terrain !== "sea" && hex.terrain !== "fog";
-  const height = !isLand
-    ? HEX_HEIGHT_SEA
-    : hex.terrain === "desert"
-    ? HEX_HEIGHT_DESERT
-    : HEX_HEIGHT_LAND;
-  const color = TERRAIN_COLORS[hex.terrain];
-  // Gold hexes shimmer; fog hexes are matte/grey; sea is glossy water; the
-  // rest get the default natural-terrain look.
-  const roughness =
-    hex.terrain === "gold"
-      ? 0.32
-      : hex.terrain === "sea"
-      ? 0.42
-      : hex.terrain === "fog"
-      ? 0.95
-      : 0.78;
-  const metalness =
-    hex.terrain === "gold"
-      ? 0.65
-      : hex.terrain === "sea"
-      ? 0.18
-      : 0.05;
+  const isSea = hex.terrain === "sea";
+  const spritePath = spriteForTerrain(hex.terrain);
+  const TILE_TOP_Y = HEX_HEIGHT_LAND; // dirt top ≈ 0.173
+  // Sprite sits a small but real distance above the dirt slab. Anything
+  // smaller than ~0.005 produces depth-buffer fighting at our camera
+  // distances and the sprite vanishes.
+  const SPRITE_Y = TILE_TOP_Y + 0.008;
+  // Token/robber/highlight stack just above the sprite — kept very
+  // close so the token reads as resting on the painted hex face.
+  const TOKEN_Y = SPRITE_Y + 0.003;
 
-  // Sea tiles don't render a body — the procedural ocean plane below shows
-  // through. We still keep the group + position so vertex/edge picking
-  // (ports, ships) maps to the right world coords.
-  const renderBody = hex.terrain !== "sea";
+  // The painted hex sprites are isometric drawings whose hexagonal
+  // silhouette fills *most* of a square frame. The hex's pointy-top
+  // height (corner-to-corner) in world units is 2 * HEX_SIZE; we scale
+  // the plane to that value so the painted hex fills the tile exactly.
+  // A tiny overlap (1.02) hides any pixel-level gap between neighbours.
+  const SPRITE_SIZE = 2 * HEX_SIZE * 1.05;
+
   return (
     <group position={[pos[0], pos[1], pos[2]]}>
-      {renderBody && (
-        <mesh
-          position={[0, height / 2, 0]}
-          rotation={[0, 0, 0]}
-          onPointerDown={onClick}
-          castShadow
-          receiveShadow
-        >
-          <cylinderGeometry args={[HEX_SIZE, HEX_SIZE, height, 6]} />
-          <meshStandardMaterial
-            color={color}
-            roughness={roughness}
-            metalness={metalness}
-            flatShading
+      {/* Click-catcher disk covers the hex footprint (slightly inset so
+          it doesn't overlap neighbours). Always present so sea hexes can
+          still be picked for pirate placement / ship moves. */}
+      <mesh
+        position={[0, 0.02, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        onPointerDown={onClick}
+        visible={false}
+      >
+        <circleGeometry args={[HEX_SIZE * 0.97, 6]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+
+      {/* Flat 3D base under the painted top.
+          - Land hexes sit on a dirt slab.
+          - Sea hexes sit on Kenney's water tile (with two rare scenic
+            variants — water-island and water-rocks — sprinkled in for
+            visual variety). The variant choice is deterministic (seeded
+            by hex id) so it stays stable across re-renders and clients. */}
+      {!isSea && (
+        <Suspense fallback={null}>
+          <KenneyModel
+            path={ASSET.hex_base_dirt}
+            position={[0, 0, 0]}
+            scale={Math.sqrt(3) * HEX_SIZE * 1.01}
+            groundOnFloor
           />
-        </mesh>
+        </Suspense>
       )}
-      {/* Invisible click-catcher for sea tiles (pirate placement, ship moves). */}
-      {!renderBody && (
-        <mesh
-          position={[0, 0, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          onPointerDown={onClick}
-          visible={false}
-        >
-          <circleGeometry args={[HEX_SIZE, 6]} />
-          <meshBasicMaterial transparent opacity={0} />
-        </mesh>
+      {isSea && (
+        <Suspense fallback={null}>
+          <KenneyModel
+            path={seaTileForHex(hex.id)}
+            position={[0, -0.1, 0]}
+            scale={Math.sqrt(3) * HEX_SIZE * 1.01}
+            groundOnFloor
+          />
+        </Suspense>
       )}
-      {/* Hex border: dark line tracing the top-face perimeter so adjacent
-          same-color hexes still show a clear seam between them. */}
-      {isLand && <HexBorder y={height + 0.001} />}
-      {/* Decor renders for land hexes (trees/sheep/ore/etc.) and also for
-          fog/gold hexes which use the same component to draw wisps/sparkles. */}
-      {(isLand || hex.terrain === "fog") && (
-        <TerrainDecor terrain={hex.terrain} y={height} hexId={hex.id} />
+
+      {/* Painted hex face — a flat plane laid horizontally on top of the
+          base. Sea hexes don't get a sprite anymore; the kit's water
+          tile mesh is the visual. */}
+      {!isSea && spritePath && (
+        <Suspense fallback={null}>
+          <HexSprite
+            path={spritePath}
+            y={SPRITE_Y}
+            size={SPRITE_SIZE}
+          />
+        </Suspense>
       )}
+
       {isLand && hex.numberToken !== null && (
-        <NumberTokenMesh number={hex.numberToken} y={height + 0.02} />
+        <NumberTokenMesh number={hex.numberToken} y={TOKEN_Y} />
       )}
-      {/* Fog hex marker — a question mark on the surface so players know it's
-          unexplored. */}
       {hex.terrain === "fog" && (
         <Text
-          position={[0, height + 0.06, 0]}
+          position={[0, TOKEN_Y + 0.04, 0]}
           rotation={[-Math.PI / 2, 0, 0]}
           fontSize={0.6}
           color="#1a1a1a"
@@ -212,356 +417,68 @@ function HexTile({
           ?
         </Text>
       )}
-      {hasRobber && <RobberMesh y={height + 0.02} />}
+      {hasRobber && <RobberMesh y={TOKEN_Y} />}
       {isHighlighted && (
-        <mesh
-          position={[0, height + 0.02, 0]}
-          rotation={[0, 0, 0]}
-        >
+        <mesh position={[0, TOKEN_Y + 0.005, 0]} rotation={[0, 0, 0]}>
           <cylinderGeometry args={[HEX_SIZE * 0.95, HEX_SIZE * 0.95, 0.01, 6]} />
-          <meshBasicMaterial color="#ffe066" transparent opacity={0.5} />
+          <meshBasicMaterial color="#ffe066" transparent opacity={0.55} />
         </mesh>
       )}
     </group>
   );
 }
 
-// Hex border: a thin closed line tracing the perimeter of the top face.
-// Used to give adjacent same-terrain hexes a visible seam between them.
-function HexBorder({ y }: { y: number }) {
-  const points = useMemo(() => {
-    const out: [number, number, number][] = [];
-    // CylinderGeometry default first vertex sits at angle 0 in (sin, cos),
-    // i.e. local (0, +radius) on the XZ plane. We follow that convention so
-    // the line lines up with the cylinder's actual edges.
-    for (let i = 0; i <= 6; i++) {
-      const a = (i * Math.PI) / 3;
-      out.push([Math.sin(a) * HEX_SIZE, 0, Math.cos(a) * HEX_SIZE]);
-    }
-    return out;
-  }, []);
+// Lays a painted PNG flat on the XZ plane at the given Y. Uses
+// alphaTest so the transparent corners of the hex sprite don't z-fight
+// with neighbouring tiles.
+function HexSprite({
+  path,
+  y,
+  size,
+}: {
+  path: string;
+  y: number;
+  size: number;
+}) {
+  const tex = useTexture(path);
+  // Setup once: nearest-friendly sampling, sRGB so the painted colours
+  // don't get gamma-shifted, and a flag that lets useTexture refresh
+  // when the cache reuses the texture across hexes.
+  useMemo(() => {
+    if (!tex) return;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+  }, [tex]);
   return (
-    <Line
-      points={points}
-      position={[0, y, 0]}
-      color="#0e1a2b"
-      lineWidth={1.5}
-      transparent
-      opacity={0.6}
-    />
+    <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <planeGeometry args={[size, size]} />
+      <meshStandardMaterial
+        map={tex}
+        transparent
+        alphaTest={0.5}
+        roughness={0.85}
+        metalness={0}
+        // Polygon offset pushes the sprite a hair closer to the camera
+        // in the depth buffer so it always wins z-fighting against the
+        // dirt slab underneath, even when both meshes share the same Y.
+        polygonOffset
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-1}
+      />
+    </mesh>
   );
 }
 
-// Deterministic pseudo-random in [0,1) from a string seed.
-function seedRand(seed: string, salt: number): number {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  h ^= salt;
-  h = Math.imul(h, 16777619);
-  return ((h >>> 0) % 100000) / 100000;
-}
+// (HexBorder removed — Kenney hex tiles already have visible bevels and
+// distinct colours, so the dark seam line isn't needed any more.)
 
-// Procedural decorations on top of a land hex. Object positions are seeded by
-// hex id so they are stable across renders / clients (the same hex always looks
-// the same). Decor placed in an annular ring outside the number token disc
-// (radius 0.42..0.85 from hex center) to avoid overlapping the token.
-function TerrainDecor({
-  terrain,
-  y,
-  hexId,
-}: {
-  terrain: HexTerrain;
-  y: number;
-  hexId: string;
-}) {
-  // Place objects in an annular ring around the hex center, evenly spread
-  // around the perimeter so they never overlap the number-token disc and
-  // never spill past the hex edge.
-  //   inner radius 0.50  → safely outside the token (radius 0.32 + buffer)
-  //   outer radius 0.78  → keeps decor inside the hex (hex outer radius = 1)
-  function placements(count: number, salt: number) {
-    const out: { x: number; z: number; r: number; angle: number }[] = [];
-    const baseAngle = seedRand(hexId, salt) * Math.PI * 2;
-    for (let i = 0; i < count; i++) {
-      // Spread uniformly around the ring, with a small random jitter per slot
-      // so things don't look like they're on a perfect circle.
-      const jitter = (seedRand(hexId, salt + i * 7 + 1) - 0.5) * 0.4;
-      const angle = baseAngle + (i / count) * Math.PI * 2 + jitter;
-      const rFrac = seedRand(hexId, salt + i * 7 + 2);
-      const radius = 0.5 + rFrac * 0.28;
-      out.push({
-        x: Math.cos(angle) * radius,
-        z: Math.sin(angle) * radius,
-        r: rFrac,
-        angle,
-      });
-    }
-    return out;
-  }
+// (seedRand removed — used only by the deleted TerrainDecor.)
 
-  if (terrain === "wood") {
-    const trees = placements(6, 1);
-    return (
-      <>
-        {trees.map((p, i) => {
-          const scale = 0.6 + p.r * 0.3;
-          return (
-            <group key={i} position={[p.x, y, p.z]}>
-              {/* Trunk */}
-              <mesh position={[0, 0.06 * scale, 0]} castShadow receiveShadow>
-                <cylinderGeometry args={[0.025, 0.035, 0.12 * scale, 12]} />
-                <meshStandardMaterial color="#5a3a1f" roughness={0.85} />
-              </mesh>
-              {/* Foliage cluster — 3 stacked cones for fuller silhouette */}
-              <mesh position={[0, 0.18 * scale, 0]} castShadow receiveShadow>
-                <coneGeometry args={[0.14 * scale, 0.18 * scale, 16]} />
-                <meshStandardMaterial color="#2a5d24" roughness={0.7} />
-              </mesh>
-              <mesh position={[0, 0.26 * scale, 0]} castShadow receiveShadow>
-                <coneGeometry args={[0.115 * scale, 0.16 * scale, 16]} />
-                <meshStandardMaterial color="#1f4d1c" roughness={0.7} />
-              </mesh>
-              <mesh position={[0, 0.34 * scale, 0]} castShadow receiveShadow>
-                <coneGeometry args={[0.085 * scale, 0.13 * scale, 16]} />
-                <meshStandardMaterial color="#173d15" roughness={0.7} />
-              </mesh>
-            </group>
-          );
-        })}
-      </>
-    );
-  }
-
-  if (terrain === "wheat") {
-    const tufts = placements(10, 2);
-    return (
-      <>
-        {tufts.map((p, i) => {
-          const scale = 0.7 + p.r * 0.5;
-          return (
-            <group key={i} position={[p.x, y, p.z]} rotation={[0, p.angle, 0]}>
-              {/* Sheaf body */}
-              <mesh position={[0, 0.05 * scale, 0]} castShadow receiveShadow>
-                <cylinderGeometry args={[0.02, 0.04, 0.1 * scale, 8]} />
-                <meshStandardMaterial color="#d8a93a" roughness={0.8} />
-              </mesh>
-              {/* Wheat head */}
-              <mesh position={[0, 0.13 * scale, 0]} castShadow receiveShadow>
-                <coneGeometry args={[0.035, 0.07 * scale, 8]} />
-                <meshStandardMaterial color="#f0c14f" roughness={0.7} />
-              </mesh>
-            </group>
-          );
-        })}
-      </>
-    );
-  }
-
-  if (terrain === "sheep") {
-    const sheep = placements(5, 3);
-    return (
-      <>
-        {sheep.map((p, i) => {
-          const scale = 0.9 + p.r * 0.3;
-          return (
-            <group key={i} position={[p.x, y, p.z]} rotation={[0, p.angle, 0]}>
-              {/* Body — fuller, smoother sphere */}
-              <mesh position={[0, 0.07 * scale, 0]} castShadow receiveShadow>
-                <sphereGeometry args={[0.085 * scale, 24, 20]} />
-                <meshStandardMaterial
-                  color="#f5f3eb"
-                  roughness={0.95}
-                  metalness={0}
-                />
-              </mesh>
-              {/* Head */}
-              <mesh
-                position={[0.085 * scale, 0.085 * scale, 0]}
-                castShadow
-                receiveShadow
-              >
-                <sphereGeometry args={[0.045 * scale, 16, 14]} />
-                <meshStandardMaterial color="#3a2a20" roughness={0.85} />
-              </mesh>
-              {/* Ears */}
-              <mesh
-                position={[0.105 * scale, 0.115 * scale, 0.025 * scale]}
-                rotation={[0, 0, 0.4]}
-                castShadow
-              >
-                <sphereGeometry args={[0.012 * scale, 8, 6]} />
-                <meshStandardMaterial color="#3a2a20" />
-              </mesh>
-            </group>
-          );
-        })}
-      </>
-    );
-  }
-
-  if (terrain === "brick") {
-    const stacks = placements(4, 4);
-    return (
-      <>
-        {stacks.map((p, i) => (
-          <group key={i} position={[p.x, y, p.z]} rotation={[0, p.angle, 0]}>
-            <mesh position={[0, 0.02, 0]} castShadow receiveShadow>
-              <boxGeometry args={[0.14, 0.04, 0.07]} />
-              <meshStandardMaterial color="#8a3a1c" roughness={0.85} />
-            </mesh>
-            <mesh position={[0.015, 0.06, 0]} castShadow receiveShadow>
-              <boxGeometry args={[0.14, 0.04, 0.07]} />
-              <meshStandardMaterial color="#9c4222" roughness={0.85} />
-            </mesh>
-            <mesh position={[-0.01, 0.1, 0]} castShadow receiveShadow>
-              <boxGeometry args={[0.14, 0.04, 0.07]} />
-              <meshStandardMaterial color="#7e3216" roughness={0.85} />
-            </mesh>
-          </group>
-        ))}
-      </>
-    );
-  }
-
-  if (terrain === "ore") {
-    const rocks = placements(5, 5);
-    return (
-      <>
-        {rocks.map((p, i) => {
-          const scale = 0.7 + p.r * 0.5;
-          return (
-            <mesh
-              key={i}
-              position={[p.x, y + 0.06 * scale, p.z]}
-              rotation={[p.r * 0.4, p.angle, p.r * 0.3]}
-              castShadow
-              receiveShadow
-            >
-              <icosahedronGeometry args={[0.1 * scale, 1]} />
-              <meshStandardMaterial
-                color="#525a6b"
-                roughness={0.7}
-                metalness={0.15}
-                flatShading
-              />
-            </mesh>
-          );
-        })}
-      </>
-    );
-  }
-
-  if (terrain === "desert") {
-    const cacti = placements(3, 6);
-    const rocks = placements(3, 7);
-    return (
-      <>
-        {cacti.map((p, i) => (
-          <group key={`c${i}`} position={[p.x, y, p.z]}>
-            <mesh position={[0, 0.1, 0]} castShadow receiveShadow>
-              <cylinderGeometry args={[0.04, 0.05, 0.2, 12]} />
-              <meshStandardMaterial color="#3d6a2c" roughness={0.85} />
-            </mesh>
-            <mesh position={[0.06, 0.13, 0]} castShadow receiveShadow>
-              <cylinderGeometry args={[0.025, 0.025, 0.08, 12]} />
-              <meshStandardMaterial color="#3d6a2c" roughness={0.85} />
-            </mesh>
-            {/* Rounded cap on top */}
-            <mesh position={[0, 0.2, 0]} castShadow>
-              <sphereGeometry args={[0.04, 12, 10]} />
-              <meshStandardMaterial color="#3d6a2c" roughness={0.85} />
-            </mesh>
-          </group>
-        ))}
-        {rocks.map((p, i) => (
-          <mesh
-            key={`r${i}`}
-            position={[p.x, y + 0.03, p.z]}
-            rotation={[p.r * 0.3, p.angle, 0]}
-            castShadow
-            receiveShadow
-          >
-            <icosahedronGeometry args={[0.05, 1]} />
-            <meshStandardMaterial
-              color="#a18860"
-              roughness={0.85}
-              flatShading
-            />
-          </mesh>
-        ))}
-      </>
-    );
-  }
-
-  if (terrain === "gold") {
-    // Sparkly gold nuggets — small icosahedrons with high metalness, plus a
-    // few tiny "shine" spheres for visible glints.
-    const nuggets = placements(5, 8);
-    const sparkles = placements(7, 9);
-    return (
-      <>
-        {nuggets.map((p, i) => {
-          const scale = 0.7 + p.r * 0.5;
-          return (
-            <mesh
-              key={`g${i}`}
-              position={[p.x, y + 0.05 * scale, p.z]}
-              rotation={[p.r * 0.4, p.angle, p.r * 0.3]}
-              castShadow
-              receiveShadow
-            >
-              <icosahedronGeometry args={[0.07 * scale, 0]} />
-              <meshStandardMaterial
-                color="#fcd34d"
-                roughness={0.25}
-                metalness={0.9}
-                flatShading
-              />
-            </mesh>
-          );
-        })}
-        {sparkles.map((p, i) => (
-          <mesh key={`gs${i}`} position={[p.x, y + 0.04, p.z]}>
-            <sphereGeometry args={[0.012, 6, 6]} />
-            <meshBasicMaterial color="#fff8c4" />
-          </mesh>
-        ))}
-      </>
-    );
-  }
-
-  if (terrain === "fog") {
-    // Wispy gray puffs that hint at hidden terrain. We don't try real volumetric
-    // fog — just a few overlapping translucent spheres for the misty look.
-    const puffs = placements(6, 10);
-    return (
-      <>
-        {puffs.map((p, i) => {
-          const scale = 0.7 + p.r * 0.6;
-          return (
-            <mesh
-              key={`f${i}`}
-              position={[p.x, y + 0.12 + p.r * 0.05, p.z]}
-            >
-              <sphereGeometry args={[0.13 * scale, 12, 10]} />
-              <meshStandardMaterial
-                color="#cfd0d8"
-                transparent
-                opacity={0.55}
-                roughness={1}
-              />
-            </mesh>
-          );
-        })}
-      </>
-    );
-  }
-
-  return null;
-}
+// (TerrainDecor removed — Kenney hex tiles ship with their own decor:
+// grass-forest already has trees, stone-mountain already has peaks,
+// grass-hill already has the hill bump, sand already has dunes. We don't
+// need a parallel hand-modelled decor layer any more.)
 
 // Layered Y-heights on top of a hex tile. Bigger Y = closer to camera (above).
 // Hex top sits at `y` (passed in by the caller). All overlays are stacked above:
@@ -571,8 +488,8 @@ function TerrainDecor({
 //                     so glyph never z-fights with dots)
 const TOKEN_DISC_HEIGHT = 0.06;
 const TOKEN_TOP_Y = TOKEN_DISC_HEIGHT; // local y at the top face of the disc
-const TEXT_Y = TOKEN_TOP_Y + 0.002;
-const PIP_Y = TOKEN_TOP_Y + 0.001;
+const TEXT_Y = TOKEN_TOP_Y + 0.005;
+const PIP_Y = TOKEN_TOP_Y + 0.004;
 // On a flat-top hex viewed from camera at (0, 11, 9), looking in -z:
 //   -z = "north" (further from camera, top of the screen)
 //   +z = "south" (closer to camera, bottom of the screen)
@@ -584,16 +501,27 @@ const PIPS_Z_OFFSET = 0.13;
 function NumberTokenMesh({ number, y }: { number: number; y: number }) {
   const isHot = number === 6 || number === 8;
   const pipColor = isHot ? "#b20a1c" : "#111111";
+  // Plain 3D wooden disc — a stubby cylinder with cream-coloured top
+  // and side. The number text sits on the top face directly. No sprite
+  // texture, no painted scallop, just clean geometry.
+  const radius = 0.32;
+  const height = 0.06;
   return (
     <group position={[0, y, 0]}>
-      {/* Token disc: cylinder default axis = +y, so caps already face up/down. */}
-      <mesh castShadow receiveShadow position={[0, TOKEN_DISC_HEIGHT / 2, 0]}>
-        <cylinderGeometry args={[0.32, 0.32, TOKEN_DISC_HEIGHT, 48]} />
-        <meshStandardMaterial color="#f3e7c6" roughness={0.55} metalness={0.05} />
+      <mesh
+        position={[0, height / 2, 0]}
+        castShadow
+        receiveShadow
+      >
+        <cylinderGeometry args={[radius, radius, height, 48]} />
+        <meshStandardMaterial
+          color="#f3e7c6"
+          roughness={0.55}
+          metalness={0.05}
+        />
       </mesh>
-      {/* Number sits in the upper half of the disc, glyph readable from camera. */}
       <Text
-        position={[0, TEXT_Y, NUMBER_Z_OFFSET]}
+        position={[0, height + 0.012, NUMBER_Z_OFFSET]}
         rotation={[-Math.PI / 2, 0, 0]}
         fontSize={0.3}
         color={isHot ? "#b20a1c" : "#111111"}
@@ -603,20 +531,29 @@ function NumberTokenMesh({ number, y }: { number: number; y: number }) {
       >
         {String(number)}
       </Text>
-      <PipDots count={pipFor(number)} color={pipColor} />
+      <PipDots count={pipFor(number)} color={pipColor} y={height + 0.011} />
     </group>
   );
 }
 
-function PipDots({ count, color }: { count: number; color: string }) {
+function PipDots({
+  count,
+  color,
+  y,
+}: {
+  count: number;
+  color: string;
+  y?: number;
+}) {
   const dots = [];
   const spacing = 0.05;
+  const dotY = y ?? PIP_Y;
   for (let i = 0; i < count; i++) {
     const x = (i - (count - 1) / 2) * spacing;
     dots.push(
       <mesh
         key={i}
-        position={[x, PIP_Y, PIPS_Z_OFFSET]}
+        position={[x, dotY, PIPS_Z_OFFSET]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
         <circleGeometry args={[0.018, 12]} />
@@ -636,16 +573,17 @@ function pipFor(n: number): number {
 }
 
 function RobberMesh({ y }: { y: number }) {
+  // Painted thief sprite — billboard so it always faces the camera as
+  // the player orbits the board. The PNG has a small empty band at the
+  // bottom around the figure's feet, so we sink the sprite a touch
+  // further than half its size for the boots to actually touch the
+  // hex face.
+  const SIZE = 0.805; // 0.7 × 1.15
   return (
     <group position={[0, y, 0]}>
-      <mesh castShadow receiveShadow position={[0, 0.3, 0]}>
-        <coneGeometry args={[0.18, 0.45, 32]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.55} metalness={0.1} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[0, 0.6, 0]}>
-        <sphereGeometry args={[0.13, 32, 24]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.55} metalness={0.1} />
-      </mesh>
+      <Suspense fallback={null}>
+        <BillboardSprite path={SPRITES.thief} size={SIZE} y={SIZE / 2 - 0.08} />
+      </Suspense>
     </group>
   );
 }
@@ -687,16 +625,23 @@ function SettlementMesh({
   position: [number, number, number];
   color: string;
 }) {
+  // Kenney unit-house tinted to the player colour. The kit authors
+  // these models with the front facade pointing along -x, so we yaw
+  // them by +π/2 so it faces +z (the camera). Sized down 30% from the
+  // earlier 0.55 width for a more proportional silhouette.
   return (
     <PopInGroup position={position}>
-      <mesh castShadow receiveShadow position={[0, 0.07, 0]}>
-        <boxGeometry args={[0.22, 0.14, 0.22]} />
-        <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[0, 0.2, 0]}>
-        <coneGeometry args={[0.18, 0.14, 4]} />
-        <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-      </mesh>
+      <PlayerRing color={color} radius={0.123} />
+      <Suspense fallback={null}>
+        <KenneyModel
+          path={ASSET.unit_house}
+          position={[0, 0, 0]}
+          rotation={[0, Math.PI / 2, 0]}
+          fitWidth={0.295}
+          groundOnFloor
+          tintColor={color}
+        />
+      </Suspense>
     </PopInGroup>
   );
 }
@@ -708,21 +653,72 @@ function CityMesh({
   position: [number, number, number];
   color: string;
 }) {
+  // Kenney unit-mansion: same yaw correction as the settlement so the
+  // facade greets the camera, and 30% smaller than the previous 0.8
+  // footprint to match the new settlement proportions.
   return (
     <PopInGroup position={position}>
-      <mesh castShadow receiveShadow position={[0, 0.1, 0]}>
-        <boxGeometry args={[0.34, 0.2, 0.34]} />
-        <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[0, 0.3, 0.07]}>
-        <boxGeometry args={[0.18, 0.2, 0.18]} />
-        <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[0, 0.43, 0.07]}>
-        <coneGeometry args={[0.13, 0.12, 4]} />
-        <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-      </mesh>
+      <PlayerRing color={color} radius={0.168} />
+      <Suspense fallback={null}>
+        <KenneyModel
+          path={ASSET.unit_mansion}
+          position={[0, 0, 0]}
+          rotation={[0, Math.PI / 2, 0]}
+          fitWidth={0.428}
+          groundOnFloor
+          tintColor={color}
+        />
+      </Suspense>
     </PopInGroup>
+  );
+}
+
+// Small ring drawn flat on the floor under the player's piece, in the
+// player's colour. Sprite assets are colour-baked so we put identity
+// underneath instead of trying to recolour the painted PNGs.
+function PlayerRing({ color, radius }: { color: string; radius: number }) {
+  return (
+    <mesh position={[0, 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[radius * 0.7, radius, 24]} />
+      <meshBasicMaterial color={color} transparent opacity={0.95} />
+    </mesh>
+  );
+}
+
+// A sprite that always faces the camera (like Three.js's built-in
+// Sprite) but with controllable size and y-offset above the anchor.
+function BillboardSprite({
+  path,
+  size,
+  y = 0,
+}: {
+  path: string;
+  size: number;
+  y?: number;
+}) {
+  const tex = useTexture(path);
+  useMemo(() => {
+    if (!tex) return;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+  }, [tex]);
+  // Drei's <Billboard> turned out to be more reliable than the bare
+  // three.js <sprite> for our PNGs — sprites occasionally rendered
+  // fully transparent during the first few frames after texture load.
+  return (
+    <Billboard position={[0, y, 0]}>
+      <mesh>
+        <planeGeometry args={[size, size]} />
+        <meshBasicMaterial
+          map={tex}
+          transparent
+          alphaTest={0.1}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </Billboard>
   );
 }
 
@@ -738,19 +734,30 @@ function RoadMesh({
   const mid = v1.clone().add(v2).multiplyScalar(0.5);
   const dir = v2.clone().sub(v1);
   const length = dir.length();
-  const angle = Math.atan2(dir.x, dir.z);
+  // path-straight is modelled along its local +x axis (bbox x ∈ [-0.5,0.5]),
+  // same as the harbour boardwalks. Yaw is taken so +x rotates into the
+  // edge direction.
+  const yaw = -Math.atan2(dir.z, dir.x);
+  // Sit a hair above the dirt slab top — close enough to read as
+  // resting on the tile, but with enough bias to avoid z-fighting.
+  const y = HEX_HEIGHT_LAND + 0.003;
   return (
-    <PopInGroup position={[mid.x, mid.y + 0.06, mid.z]}>
-      <mesh rotation={[0, angle, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.1, 0.08, length * 0.85]} />
-        <meshStandardMaterial color={color} roughness={0.4} metalness={0.15} />
-      </mesh>
+    <PopInGroup position={[mid.x, y, mid.z]}>
+      <Suspense fallback={null}>
+        <KenneyModel
+          path={ASSET.path_straight}
+          rotation={[0, yaw, 0]}
+          fitWidth={length * 0.92}
+          groundOnFloor
+          tintColor={color}
+        />
+      </Suspense>
     </PopInGroup>
   );
 }
 
-// Tiny sailboat: pointed brown hull + white triangular sail. The piece sits
-// flat on the water (y close to sea height) so it doesn't float in the sky.
+// Player ship — Kenney's unit-ship for normal ships, unit-ship-large for
+// warships. Tinted to the player colour and oriented along the edge.
 function ShipMesh({
   v1,
   v2,
@@ -766,90 +773,17 @@ function ShipMesh({
   const dir = v2.clone().sub(v1);
   const length = dir.length();
   const angle = Math.atan2(dir.x, dir.z);
-  const baseY = HEX_HEIGHT_SEA + 0.04;
-  const hullLen = length * 0.62;
-  // Triangular sail geometry — a real triangle so the silhouette reads
-  // as a sailboat from any angle, not a tiny brick on a stick.
-  const sailShape = useMemo(() => {
-    const s = new THREE.Shape();
-    s.moveTo(0, 0);
-    s.lineTo(0, 0.22);
-    s.lineTo(hullLen * 0.42, 0);
-    s.lineTo(0, 0);
-    return s;
-  }, [hullLen]);
   return (
-    <PopInGroup position={[mid.x, baseY, mid.z]}>
-      <group rotation={[0, angle, 0]}>
-        {/* Hull — tapered prow using a stretched cylinder rotated on its side */}
-        <mesh castShadow receiveShadow rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[0.06, 0.045, hullLen, 12]} />
-          <meshStandardMaterial color="#5a3a1f" roughness={0.85} />
-        </mesh>
-        {/* Deck plank — slightly lighter wood */}
-        <mesh position={[0, 0.025, 0]} castShadow receiveShadow>
-          <boxGeometry args={[0.085, 0.005, hullLen * 0.95]} />
-          <meshStandardMaterial color="#7d5832" roughness={0.9} />
-        </mesh>
-        {/* Player-color stripe band around the hull */}
-        <mesh position={[0, 0.012, 0]} castShadow receiveShadow>
-          <boxGeometry args={[0.13, 0.014, hullLen * 0.95]} />
-          <meshStandardMaterial color={color} roughness={0.5} metalness={0.2} />
-        </mesh>
-        {/* Bow tip — small wedge in front */}
-        <mesh
-          position={[0, 0.01, hullLen * 0.5 + 0.02]}
-          rotation={[0, Math.PI / 4, 0]}
-          castShadow
-        >
-          <boxGeometry args={[0.045, 0.05, 0.045]} />
-          <meshStandardMaterial color="#5a3a1f" roughness={0.85} />
-        </mesh>
-        {/* Mast */}
-        <mesh position={[0, 0.14, 0]} castShadow receiveShadow>
-          <cylinderGeometry args={[0.013, 0.013, 0.26, 10]} />
-          <meshStandardMaterial color="#2a1a08" roughness={0.85} />
-        </mesh>
-        {/* Boom */}
-        <mesh position={[0, 0.05, hullLen * 0.05]} castShadow>
-          <boxGeometry args={[0.012, 0.012, hullLen * 0.4]} />
-          <meshStandardMaterial color="#2a1a08" roughness={0.85} />
-        </mesh>
-        {/* Sail — actual triangle facing crosswise */}
-        <mesh position={[0, 0.05, 0]} castShadow>
-          <shapeGeometry args={[sailShape]} />
-          <meshStandardMaterial
-            color={isWarship ? "#a02a2a" : "#f5f3eb"}
-            roughness={0.55}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
-        {/* Warship: red flag + cannon notches */}
-        {isWarship && (
-          <>
-            <mesh position={[0.04, 0.28, 0]} castShadow>
-              <boxGeometry args={[0.07, 0.045, 0.006]} />
-              <meshStandardMaterial color={color} />
-            </mesh>
-            <mesh
-              position={[0.07, 0.012, hullLen * 0.15]}
-              rotation={[0, 0, Math.PI / 2]}
-              castShadow
-            >
-              <cylinderGeometry args={[0.012, 0.012, 0.06, 8]} />
-              <meshStandardMaterial color="#1a1a1a" roughness={0.5} metalness={0.6} />
-            </mesh>
-            <mesh
-              position={[-0.07, 0.012, hullLen * 0.15]}
-              rotation={[0, 0, Math.PI / 2]}
-              castShadow
-            >
-              <cylinderGeometry args={[0.012, 0.012, 0.06, 8]} />
-              <meshStandardMaterial color="#1a1a1a" roughness={0.5} metalness={0.6} />
-            </mesh>
-          </>
-        )}
-      </group>
+    <PopInGroup position={[mid.x, HEX_HEIGHT_SEA, mid.z]}>
+      <Suspense fallback={null}>
+        <KenneyModel
+          path={isWarship ? ASSET.unit_ship_large : ASSET.unit_ship}
+          rotation={[0, angle, 0]}
+          fitWidth={length * 0.85}
+          groundOnFloor
+          tintColor={color}
+        />
+      </Suspense>
     </PopInGroup>
   );
 }
@@ -872,230 +806,6 @@ function PirateMesh({ y }: { y: number }) {
         <meshStandardMaterial color="#f0eee5" />
       </mesh>
     </group>
-  );
-}
-
-// Procedural ocean: stacked Gerstner-style wave trains for displacement,
-// analytical normals for specular sun glints, dual-layer foam, fresnel
-// reflection. The plane sits flat in world space (rotated -90°) but the
-// shader works on a local x/y where x = world-x, y = world-z.
-function OceanPlane() {
-  const matRef = useRef<THREE.ShaderMaterial>(null);
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uShallow: { value: new THREE.Color("#3a82b8") },
-      uDeep: { value: new THREE.Color("#031a2e") },
-      uSky: { value: new THREE.Color("#aac6dc") },
-      uFoam: { value: new THREE.Color("#e8f4ff") },
-      uSunDir: { value: new THREE.Vector3(0.6, 0.7, 0.4).normalize() },
-    }),
-    [],
-  );
-  useFrame((_, delta) => {
-    if (matRef.current) {
-      uniforms.uTime.value += delta;
-    }
-  });
-  const vertexShader = /* glsl */ `
-    varying vec3 vWorldPos;
-    varying vec3 vNormal;
-    varying float vCrest;
-    varying vec2 vUv;
-    uniform float uTime;
-
-    // Gerstner-ish: each wave displaces along its direction (steepness)
-    // and vertically (height). We accumulate displacement and analytic
-    // tangent/bitangent so the fragment shader can reconstruct a normal.
-    void gerstner(
-      inout vec3 p,
-      inout vec3 tx,
-      inout vec3 tz,
-      vec2 dir, float wavelength, float steepness, float speed
-    ) {
-      float k = 6.2831853 / wavelength;          // wave number
-      float c = sqrt(9.81 / k);                  // phase speed (deep water)
-      vec2 d = normalize(dir);
-      float f = k * (dot(d, p.xy) - c * uTime * speed);
-      float a = steepness / k;
-      p.x += d.x * a * cos(f);
-      p.y += d.y * a * cos(f);
-      p.z += a * sin(f);
-      // Partial derivatives for normal recovery.
-      tx.x += -d.x * d.x * steepness * sin(f);
-      tx.y += -d.x * d.y * steepness * sin(f);
-      tx.z +=  d.x * steepness * cos(f);
-      tz.x += -d.y * d.x * steepness * sin(f);
-      tz.y += -d.y * d.y * steepness * sin(f);
-      tz.z +=  d.y * steepness * cos(f);
-    }
-
-    void main() {
-      vUv = uv;
-      vec3 p = position;
-      vec3 tx = vec3(1.0, 0.0, 0.0);
-      vec3 tz = vec3(0.0, 1.0, 0.0);
-
-      // Steepness kept low (max 0.05) so the wave crests never punch up
-      // through the hex tiles. The mesh sits well below world y=0; the
-      // displacement adds at most ~0.1 world units on top of that.
-      gerstner(p, tx, tz, vec2( 1.0,  0.35), 6.0,  0.050, 0.85);
-      gerstner(p, tx, tz, vec2(-0.30, 1.0 ), 4.2,  0.040, 1.05);
-      gerstner(p, tx, tz, vec2( 0.62, 0.78), 2.6,  0.030, 1.35);
-      gerstner(p, tx, tz, vec2(-0.85, 0.52), 1.6,  0.022, 1.65);
-      gerstner(p, tx, tz, vec2( 0.10, 0.99), 0.9,  0.014, 2.10);
-
-      vec3 n = normalize(cross(tz, tx));
-      vNormal = n;
-      // Wave crest (height above mean) drives foam at the top of waves.
-      vCrest = p.z;
-      vec4 wp = modelMatrix * vec4(p, 1.0);
-      vWorldPos = wp.xyz;
-      gl_Position = projectionMatrix * viewMatrix * wp;
-    }
-  `;
-  const fragmentShader = /* glsl */ `
-    varying vec3 vWorldPos;
-    varying vec3 vNormal;
-    varying float vCrest;
-    varying vec2 vUv;
-    uniform float uTime;
-    uniform vec3 uShallow;
-    uniform vec3 uDeep;
-    uniform vec3 uSky;
-    uniform vec3 uFoam;
-    uniform vec3 uSunDir;
-
-    float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-    }
-    float vnoise(vec2 p) {
-      vec2 i = floor(p);
-      vec2 f = fract(p);
-      float a = hash(i);
-      float b = hash(i + vec2(1.0, 0.0));
-      float c = hash(i + vec2(0.0, 1.0));
-      float d = hash(i + vec2(1.0, 1.0));
-      vec2 u = f * f * (3.0 - 2.0 * f);
-      return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-    }
-    float fbm(vec2 p) {
-      float v = 0.0;
-      float a = 0.5;
-      mat2 rot = mat2(0.8, -0.6, 0.6, 0.8);
-      for (int i = 0; i < 5; i++) {
-        v += a * vnoise(p);
-        p = rot * p * 2.05;
-        a *= 0.5;
-      }
-      return v;
-    }
-
-    // Domain-warped fbm — gives the surface texture a more organic,
-    // less repeating look than plain fbm.
-    float wfbm(vec2 p) {
-      vec2 q = vec2(fbm(p), fbm(p + vec2(5.2, 1.3)));
-      return fbm(p + 1.5 * q);
-    }
-
-    void main() {
-      // World-space normal (rotated to face up via the mesh transform).
-      vec3 baseN = normalize(vNormal);
-      // High-frequency normal perturbation — two scrolling layers of
-      // ripple texture that we encode as small slope vectors and add to
-      // the base Gerstner normal. This is what makes the surface read as
-      // "real" water instead of slow plastic waves.
-      vec2 rp1 = vWorldPos.xz * 4.0 + vec2(uTime * 0.18, uTime * 0.12);
-      vec2 rp2 = vWorldPos.xz * 9.0 - vec2(uTime * 0.10, uTime * 0.08);
-      float h1x = fbm(rp1 + vec2(0.05, 0.0)) - fbm(rp1 - vec2(0.05, 0.0));
-      float h1y = fbm(rp1 + vec2(0.0, 0.05)) - fbm(rp1 - vec2(0.0, 0.05));
-      float h2x = fbm(rp2 + vec2(0.03, 0.0)) - fbm(rp2 - vec2(0.03, 0.0));
-      float h2y = fbm(rp2 + vec2(0.0, 0.03)) - fbm(rp2 - vec2(0.0, 0.03));
-      vec3 ripple = vec3(h1x * 1.6 + h2x * 0.9, 0.0, h1y * 1.6 + h2y * 0.9);
-      vec3 N = normalize(baseN + ripple);
-
-      // Camera direction.
-      vec3 V = normalize(cameraPosition - vWorldPos);
-      vec3 L = normalize(uSunDir);
-      vec3 H = normalize(L + V);
-
-      // Fresnel (Schlick) — water reflects much more at glancing angles.
-      float f0 = 0.02;
-      float fres = f0 + (1.0 - f0) * pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0);
-
-      // Depth gradient. Distance from board centre fakes shallow→deep falloff.
-      float dist = length(vWorldPos.xz) / 18.0;
-      vec3 deepWater = mix(uShallow, uDeep, smoothstep(0.0, 1.0, dist));
-
-      // Cyan tint at wave peaks (subsurface scatter through the crest).
-      float sss = clamp(vCrest * 8.0 + 0.2, 0.0, 1.0);
-      vec3 water = mix(deepWater, uShallow * vec3(1.05, 1.15, 1.20), sss * 0.45);
-
-      // Domain-warped colour variation so big "tide pools" show up — keeps
-      // the surface from looking uniform under a wide camera.
-      float warp = wfbm(vWorldPos.xz * 0.18 + uTime * 0.015);
-      water *= mix(0.92, 1.10, warp);
-
-      // Hemispheric ambient: sky tint from above, water tint from below.
-      float upDot = clamp(N.y, 0.0, 1.0);
-      vec3 ambient = mix(uDeep * 0.6, uSky * 0.55, upDot);
-      water = mix(ambient, water, 0.78);
-
-      // Sun specular — Blinn-Phong with two lobes (one tight, one wide).
-      float specTight = pow(clamp(dot(N, H), 0.0, 1.0), 180.0);
-      float specWide  = pow(clamp(dot(N, H), 0.0, 1.0), 28.0);
-      float sparkle = pow(
-        smoothstep(0.55, 1.0, wfbm(vWorldPos.xz * 1.8 + uTime * 0.5)),
-        2.0
-      );
-      vec3 specular = vec3(1.0, 0.97, 0.85)
-        * (specTight * 1.6 + specWide * 0.35 + sparkle * 0.75);
-
-      // Reflected sky colour — fresnel-blended on top of the water.
-      vec3 reflCol = mix(uSky * 0.55, uSky * 1.05, clamp(L.y, 0.0, 1.0));
-      vec3 col = mix(water, reflCol, fres * 0.82);
-      col += specular;
-
-      // Foam: low-freq drifting fbm + high-freq lacy detail + crest foam.
-      float drift1 = wfbm(vWorldPos.xz * 0.55 + vec2(uTime * 0.04, uTime * 0.02));
-      float drift2 = fbm(vWorldPos.xz * 3.0 - vec2(uTime * 0.05, uTime * 0.03));
-      float foam = smoothstep(0.64, 0.86, drift1) * 0.45
-                 + smoothstep(0.72, 0.94, drift2) * 0.20;
-      float crest = smoothstep(0.022, 0.06, vCrest) * 0.65;
-      foam = clamp(foam + crest, 0.0, 1.0);
-      // Foam is brightest where its own little FBM peaks — gives it a
-      // lacy texture instead of milky blobs.
-      float foamLace = smoothstep(0.5, 0.8, fbm(vWorldPos.xz * 12.0 + uTime * 0.4));
-      col = mix(col, uFoam, foam * mix(0.45, 0.85, foamLace));
-
-      // Slight horizon haze — very far rings get blue-grey ambient.
-      float horizon = smoothstep(0.85, 1.05, dist);
-      col = mix(col, uDeep * 0.85, horizon * 0.7);
-
-      gl_FragColor = vec4(col, 1.0);
-    }
-  `;
-  return (
-    <mesh
-      receiveShadow
-      // Sit well below the sea-hex floor (HEX_HEIGHT_SEA = 0.05) so the
-      // wave tops never punch up through the actual hex tiles. Combined
-      // with the small-amplitude Gerstner stack, the highest crest peaks
-      // around y ≈ -0.16 — comfortably under the sea hex top.
-      position={[0, -0.35, 0]}
-      rotation={[-Math.PI / 2, 0, 0]}
-    >
-      {/* Big plane with lots of vertices so Gerstner waves stay sharp.
-          The board's max camera distance is 42, so the plane needs to
-          extend beyond that or you can see the edge when zoomed out. */}
-      <planeGeometry args={[120, 120, 256, 256]} />
-      <shaderMaterial
-        ref={matRef}
-        uniforms={uniforms}
-        vertexShader={vertexShader}
-        fragmentShader={fragmentShader}
-      />
-    </mesh>
   );
 }
 
@@ -1260,12 +970,6 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
     return map;
   }, [hexes]);
 
-  // Port sits floating ABOVE the land tile's top so it stays visible from
-  // the standard top-down camera angle and never gets occluded by hex bodies.
-  const PORT_DISC_HEIGHT = 0.04;
-  const PORT_BASE_Y = HEX_HEIGHT_LAND - 0.02;
-  const PLANK_Y = PORT_BASE_Y + 0.005;
-
   return (
     <>
       {ports.map((port) => {
@@ -1275,86 +979,102 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
         if (!land) return null;
 
         const mid = e.v1.clone().add(e.v2).multiplyScalar(0.5);
-        // Outward = direction from the land hex CENTER toward this edge mid,
-        // projected on the XZ plane. This is the true "out to sea" direction.
         const [hx, , hz] = hexToWorld(land.coord);
         const outward = new THREE.Vector3(mid.x - hx, 0, mid.z - hz);
         if (outward.lengthSq() > 0) outward.normalize();
 
-        // Push the dock head outward enough that the disc sits clearly off the
-        // land hex's footprint (hex pointy-corner reach is 1.0 in world units).
-        const dockOffset = 0.7;
-        const dockMid = new THREE.Vector3(
+        // Push the dock head outward enough that the model sits clearly off
+        // the land tile's footprint.
+        const dockOffset = 0.55;
+        const dockCenter = new THREE.Vector3(
           mid.x + outward.x * dockOffset,
-          PORT_BASE_Y,
+          HEX_HEIGHT_SEA,
           mid.z + outward.z * dockOffset,
         );
+        const dockYaw = Math.atan2(outward.x, outward.z);
 
-        const color =
-          port.kind === "any" ? "#d4d4d4" : TERRAIN_COLORS[port.kind];
-        const label = port.kind === "any" ? "3:1" : "2:1";
+        // 2:1 ports already paint their resource cargo onto the dock
+        // sprite, so the extra "2:1" tag would be redundant. Only the
+        // generic 3:1 needs a label. 2:1 sprites are 30% smaller so
+        // they don't dominate next to land. Y offset is tuned so the
+        // sprite's painted base sits just above the sea, not floating.
+        const isGeneric = port.kind === "any";
+        const portSize = isGeneric ? 0.69 : 0.483;
+        const portY = portSize / 2;
 
-        // Plank endpoints: at the two shore corners of this edge, lifted up
-        // to the same Y as the dock head so the planks lie flat on top of
-        // the hex/sea instead of diving down into it.
-        const v1 = new THREE.Vector3(e.v1.x, PLANK_Y, e.v1.z);
-        const v2 = new THREE.Vector3(e.v2.x, PLANK_Y, e.v2.z);
-        const dockMidPlank = new THREE.Vector3(
-          dockMid.x,
-          PLANK_Y,
-          dockMid.z,
-        );
-
-        function plank(a: THREE.Vector3, b: THREE.Vector3, key: string) {
-          const center = a.clone().add(b).multiplyScalar(0.5);
-          const dir = b.clone().sub(a);
-          const len = dir.length();
-          // Angle of the plank in the XZ plane (ignore Y for orientation).
-          const angle = Math.atan2(dir.x, dir.z);
-          // Tilt: how much the plank slopes along its length (from shore down to sea).
-          const horizLen = Math.hypot(dir.x, dir.z);
-          const tilt = -Math.atan2(dir.y, horizLen);
+        // Two boardwalks — one from each shore corner of the edge out to
+        // the dock. Together they form a triangular pier that visually
+        // ties the dock back to the hexagon.
+        function plank(corner: THREE.Vector3, key: string) {
+          const from = new THREE.Vector3(corner.x, HEX_HEIGHT_LAND, corner.z);
+          const to = new THREE.Vector3(
+            dockCenter.x,
+            HEX_HEIGHT_SEA + 0.04,
+            dockCenter.z,
+          );
+          // Slightly trim the dock side so the two planks don't bury into
+          // the dock sprite — they should converge AT the dock, not pass
+          // through it.
+          const trimmed = from.clone().lerp(to, 0.95);
+          const center = from.clone().add(trimmed).multiplyScalar(0.5);
+          const len = from.distanceTo(trimmed);
+          // path-straight is modelled along its local +x axis (bbox
+          // x ∈ [-0.5, 0.5]). Yaw is taken so that +x rotates into the
+          // (to - from) direction in the XZ plane.
+          const dx = trimmed.x - from.x;
+          const dz = trimmed.z - from.z;
+          const yaw = Math.atan2(dz, dx);
           return (
-            <mesh
-              key={key}
-              position={[center.x, center.y, center.z]}
-              rotation={[tilt, angle, 0]}
-              castShadow
-              receiveShadow
-            >
-              <boxGeometry args={[0.05, 0.03, len]} />
-              <meshStandardMaterial color="#7a4f2a" roughness={0.85} />
-            </mesh>
+            <Suspense fallback={null} key={key}>
+              <KenneyModel
+                path={ASSET.path_straight}
+                position={[center.x, center.y, center.z]}
+                rotation={[0, -yaw, 0]}
+                fitWidth={len * 1.02}
+                groundOnFloor
+                tintColor="#a37844"
+              />
+            </Suspense>
           );
         }
 
-        const portDiscCenterY = dockMid.y + PORT_DISC_HEIGHT / 2;
-        const portDiscTopY = dockMid.y + PORT_DISC_HEIGHT;
-        const portLabelY = portDiscTopY + 0.002;
-
         return (
           <group key={port.edgeId}>
-            {plank(v1, dockMidPlank, "p1")}
-            {plank(v2, dockMidPlank, "p2")}
-            <mesh
-              position={[dockMid.x, portDiscCenterY, dockMid.z]}
-              castShadow
-              receiveShadow
+            {plank(e.v1, "p1")}
+            {plank(e.v2, "p2")}
+            <Suspense fallback={null}>
+              <group position={[dockCenter.x, HEX_HEIGHT_SEA, dockCenter.z]}>
+                <BillboardSprite
+                  path={spriteForPortKind(port.kind)}
+                  size={portSize}
+                  y={portSize * 0.42}
+                />
+              </group>
+            </Suspense>
+
+            <Billboard
+              position={[dockCenter.x, HEX_HEIGHT_SEA + portSize * 0.95, dockCenter.z]}
             >
-              <cylinderGeometry args={[0.22, 0.22, PORT_DISC_HEIGHT, 36]} />
-              <meshStandardMaterial color={color} roughness={0.5} metalness={0.05} />
-            </mesh>
-            <Text
-              position={[dockMid.x, portLabelY, dockMid.z]}
-              rotation={[-Math.PI / 2, 0, 0]}
-              fontSize={0.13}
-              color="#111111"
-              anchorX="center"
-              anchorY="middle"
-              fontWeight={700}
-            >
-              {label}
-            </Text>
+              <mesh>
+                <planeGeometry args={[0.32, 0.18]} />
+                <meshBasicMaterial
+                  color="#0f172a"
+                  transparent
+                  opacity={0.82}
+                  depthWrite={false}
+                />
+              </mesh>
+              <Text
+                position={[0, 0, 0.001]}
+                fontSize={0.12}
+                color="#ffffff"
+                anchorX="center"
+                anchorY="middle"
+                fontWeight={700}
+              >
+                {isGeneric ? "3:1" : "2:1"}
+              </Text>
+            </Billboard>
           </group>
         );
       })}
@@ -1383,7 +1103,13 @@ export function Board3D(props: Board3DProps) {
         toneMappingExposure: 1.05,
         outputColorSpace: THREE.SRGBColorSpace,
       }}
-      dpr={[1, 2]}
+      // Cap pixel ratio to 1.6 (was 2). On retina/4K screens this halves
+      // the fragment shader load with virtually no perceived sharpness loss.
+      dpr={[1, 1.6]}
+      // R3F adaptive throttling: when the frame rate dips, automatically
+      // drop quality (fewer samples, lower DPR) until it recovers. Comes
+      // back to full quality on idle.
+      performance={{ min: 0.5 }}
     >
       <Suspense fallback={null}>
         <color attach="background" args={["#0e1a2b"]} />
@@ -1414,8 +1140,15 @@ export function Board3D(props: Board3DProps) {
           color="#9bbcff"
         />
 
-        {/* Sea plane underneath the board — animated procedural water */}
-        <OceanPlane />
+        {/* Decorative water backdrop — Kenney water tiles tiled in a
+            wide hex spiral around the actual board so the dirt slabs
+            don't sit in a void. The deco tiles aren't part of game
+            state (no clicks, no production), they exist only to make
+            the camera feel like it's looking at an island in a sea.
+            water-island and water-rocks variants are sprinkled in via
+            the same per-hex hash used by sea hexes. */}
+        <WaterBackdrop hexes={props.hexes} />
+
         {/* Soft contact shadow under the board to ground the geometry. */}
         <ContactShadows
           position={[0, 0.04, 0]}
@@ -1494,7 +1227,9 @@ export function Board3D(props: Board3DProps) {
           );
         })()}
 
-        {/* Pirate Islands fortresses */}
+        {/* Pirate Islands fortresses — painted pirate-castle sprite with
+            an owner-colour ring at the base when captured. HP cubes float
+            above to show remaining hits. */}
         {(props.fortresses ?? []).map((f) => {
           const hex = props.hexes.find((h) => h.id === f.hexId);
           if (!hex) return null;
@@ -1502,39 +1237,24 @@ export function Board3D(props: Board3DProps) {
           const owner = f.ownerId
             ? props.players.find((p) => p.id === f.ownerId)
             : null;
-          const wallColor = owner ? PLAYER_COLORS[owner.color] : "#3a3a3a";
+          const ringColor = owner ? PLAYER_COLORS[owner.color] : "#7a6f5e";
           return (
             <group key={f.hexId} position={[x, HEX_HEIGHT_DESERT, z]}>
-              {/* Fortress base */}
-              <mesh castShadow receiveShadow position={[0, 0.1, 0]}>
-                <boxGeometry args={[0.6, 0.2, 0.6]} />
-                <meshStandardMaterial color={wallColor} roughness={0.8} />
-              </mesh>
-              {/* Four corner towers */}
-              {[
-                [-0.25, -0.25],
-                [0.25, -0.25],
-                [-0.25, 0.25],
-                [0.25, 0.25],
-              ].map(([tx, tz], i) => (
-                <mesh
-                  key={i}
-                  castShadow
-                  receiveShadow
-                  position={[tx, 0.25, tz]}
-                >
-                  <cylinderGeometry args={[0.07, 0.08, 0.32, 8]} />
-                  <meshStandardMaterial color={wallColor} roughness={0.75} />
-                </mesh>
-              ))}
-              {/* HP indicator: tiny cubes at the top, one per remaining hp */}
+              <PlayerRing color={ringColor} radius={0.55} />
+              <Suspense fallback={null}>
+                <BillboardSprite
+                  path={SPRITES.pirate_castle}
+                  size={1.2}
+                  y={0.6}
+                />
+              </Suspense>
               {Array.from({ length: f.hpRemaining }).map((_, i) => (
                 <mesh
                   key={`hp${i}`}
-                  position={[(i - (f.hpRemaining - 1) / 2) * 0.08, 0.5, 0]}
+                  position={[(i - (f.hpRemaining - 1) / 2) * 0.09, 0.95, 0]}
                   castShadow
                 >
-                  <boxGeometry args={[0.05, 0.05, 0.05]} />
+                  <boxGeometry args={[0.06, 0.06, 0.06]} />
                   <meshStandardMaterial
                     color={owner ? "#fff8c4" : "#a02a2a"}
                     emissive={owner ? "#aa8a40" : "#7a1818"}
@@ -1625,6 +1345,62 @@ export function Board3D(props: Board3DProps) {
         />
       </Suspense>
     </Canvas>
+  );
+}
+
+// Build a ring of decorative water hexes around the actual board.
+// Strategy: take every (q, r) in a wide rectangular bounding box around
+// the existing hexes, skip the cells that the real board already
+// occupies, and render plain water (or a rare island/rocks variant)
+// for the rest. The radius is generous enough that even at full zoom
+// out the camera doesn't see the edge.
+function WaterBackdrop({ hexes }: { hexes: Hex[] }) {
+  const decoHexes = useMemo(() => {
+    if (hexes.length === 0) return [];
+    const occupied = new Set<string>();
+    let minQ = Infinity,
+      maxQ = -Infinity,
+      minR = Infinity,
+      maxR = -Infinity;
+    for (const h of hexes) {
+      occupied.add(`${h.coord.q},${h.coord.r}`);
+      if (h.coord.q < minQ) minQ = h.coord.q;
+      if (h.coord.q > maxQ) maxQ = h.coord.q;
+      if (h.coord.r < minR) minR = h.coord.r;
+      if (h.coord.r > maxR) maxR = h.coord.r;
+    }
+    // Pad outwards. Camera maxDistance is 42 world units; padding 10
+    // hex rings (≈ 17 world units in any direction) gives the player
+    // a healthy water margin without exploding the draw call count.
+    const PAD = 10;
+    const result: { q: number; r: number; id: string }[] = [];
+    for (let q = minQ - PAD; q <= maxQ + PAD; q++) {
+      for (let r = minR - PAD; r <= maxR + PAD; r++) {
+        const key = `${q},${r}`;
+        if (occupied.has(key)) continue;
+        result.push({ q, r, id: `bg:${key}` });
+      }
+    }
+    return result;
+  }, [hexes]);
+
+  const scale = Math.sqrt(3) * HEX_SIZE * 1.01;
+  return (
+    <>
+      {decoHexes.map((h) => {
+        const px = axialToPixel(h, HEX_SIZE);
+        return (
+          <Suspense fallback={null} key={h.id}>
+            <KenneyModel
+              path={seaTileForHex(h.id)}
+              position={[px.x, -0.1, px.y]}
+              scale={scale}
+              groundOnFloor
+            />
+          </Suspense>
+        );
+      })}
+    </>
   );
 }
 

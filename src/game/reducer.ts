@@ -30,7 +30,7 @@ function fail(error: string): ReducerError {
 const RESOURCE_EMOJI: Record<Resource, string> = {
   wood: "🌲",
   brick: "🧱",
-  wheat: "🌾",
+  wheat: "🍞",
   sheep: "🐑",
   ore: "⛏️",
 };
@@ -870,7 +870,7 @@ function maybeAwardDesertCrossingBonus(
   const player = getPlayer(state, playerId);
   log(
     state,
-    `${player?.nickname ?? "Oyuncu"} çölü geçti! +${bonus} VP`,
+    `${player?.nickname ?? "Oyuncu"} çölü geçti! +${bonus} GP`,
     playerId,
   );
 }
@@ -934,7 +934,7 @@ function maybeAwardIslandBonus(
   const player = getPlayer(state, playerId);
   log(
     state,
-    `${player?.nickname ?? "Oyuncu"} yeni adada ilk yerleşimi! +${bonus} VP`,
+    `${player?.nickname ?? "Oyuncu"} yeni adada ilk yerleşimi! +${bonus} GP`,
     playerId,
   );
 }
@@ -1088,6 +1088,15 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
         );
       } else if (difficulty === "hard") {
         state.rules.victoryPointsToWin = state.rules.victoryPointsToWin + 2;
+      }
+
+      // Host VP override wins over everything else — if the lobby
+      // settings explicitly set a target, ignore template defaults,
+      // player-count scaling AND difficulty bumps so the host gets
+      // exactly the game length they wanted.
+      const vpOverride = state.settings.victoryPointsToWin;
+      if (typeof vpOverride === "number" && vpOverride >= 3) {
+        state.rules.victoryPointsToWin = Math.min(20, Math.floor(vpOverride));
       }
 
       // Setup phase doesn't use the turn timer (placements are short and the
@@ -1538,7 +1547,7 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
           state.bonusVP[cp.id] = (state.bonusVP[cp.id] ?? 0) + 2;
           log(
             state,
-            `${cp.nickname} kaleyi ele geçirdi! Sald: ${attackRoll} - Sav: ${defenseRoll} (+2 VP)`,
+            `${cp.nickname} kaleyi ele geçirdi! Sald: ${attackRoll} - Sav: ${defenseRoll} (+2 GP)`,
             cp.id,
           );
         } else {
@@ -1789,6 +1798,20 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
         );
       }
       log(state, `${player.nickname} teklifi reddetti.`, player.id);
+      // If every other player has rejected, the offer is dead — clear it
+      // automatically so the offerer doesn't have to hit "İptal et".
+      const otherPlayers = state.players.filter(
+        (p) => p.id !== state.pendingTrade!.fromPlayerId && p.connected,
+      );
+      const allRejected = otherPlayers.every((p) =>
+        state.pendingTrade!.rejectedBy.includes(p.id),
+      );
+      if (otherPlayers.length > 0 && allRejected) {
+        state.pendingTrade = null;
+        state.tradeDeadlineMs = null;
+        if (state.subPhase === "trading") state.subPhase = "main";
+        log(state, "Teklif tüm oyuncular tarafından reddedildi.");
+      }
       return { ok: true, state };
     }
 

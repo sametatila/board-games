@@ -24,3 +24,23 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Desktop layout fits the viewport — no page scroll, internal panels
+   handle their own overflow. Mobile keeps natural scrolling so long
+   sidebars / boards don't get clipped on small screens. */
+@media (min-width: 1024px) {
+  html,
+  body {
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
+/* All-caps utility ruins Turkish glyphs — "İstediğin" becomes
+   "ISTEDIĞIN" because CSS text-transform doesn't follow tr-TR locale
+   rules. Disable the utility entirely; the existing tracking + font
+   weight already differentiates these section headings without needing
+   actual upper-casing. */
+.uppercase {
+  text-transform: none !important;
+}

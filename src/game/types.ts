@@ -133,6 +133,11 @@ export type GameSettings = {
   allowPlayerTrades: boolean;
   /** If true, log a "your turn" sound to the active player when their turn starts. */
   turnSound: boolean;
+  /** Override for the victory-points-to-win target. null/undefined =
+   *  use the map template's default (10 for classic, 11–13 for scenarios)
+   *  with the usual 5+ player +2 / 7+ player +2 scaling on top. A
+   *  number here freezes the target — no scaling, exactly this many VP. */
+  victoryPointsToWin?: number | null;
 };
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -141,6 +146,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   discardTimerSec: 45,
   allowPlayerTrades: true,
   turnSound: true,
+  victoryPointsToWin: null,
 };
 
 export type GameRules = {

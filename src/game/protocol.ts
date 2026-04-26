@@ -18,6 +18,7 @@ export type ClientMessage =
   | { t: "set_map"; mapTemplateId: MapTemplateId }
   | { t: "set_difficulty"; difficulty: Difficulty }
   | { t: "set_settings"; settings: Partial<GameSettings> }
+  | { t: "set_color"; color: PlayerColor }
   | { t: "start_game" }
   | { t: "reset_room" }
   | { t: "action"; action: GameAction }

@@ -12,6 +12,8 @@ import { isValidRoomCode } from "@/game/roomCode";
 import type { MapTemplateId } from "@/game/types";
 import type { GameAction } from "@/game/actions";
 import { Countdown, GameViewContainer, PlayerScores } from "@/components/GameView";
+import { Tooltip } from "@/components/Tooltip";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { setMuted, isMuted } from "@/lib/sfx";
 
 function ClientOnly({ children }: { children: React.ReactNode }) {
@@ -90,7 +92,7 @@ function ErrorToast() {
 
 // Map metadata is now sourced from the canonical MAP_TEMPLATES so the lobby
 // stays in sync with the gameplay rules (ships, win condition, etc.).
-import { MAP_TEMPLATES } from "@/game/mapTemplates";
+import { MAP_TEMPLATES, MAP_GUIDES } from "@/game/mapTemplates";
 
 const MAP_OPTIONS: { id: MapTemplateId; label: string; description: string }[] =
   (Object.keys(MAP_TEMPLATES) as MapTemplateId[]).map((id) => ({
@@ -173,7 +175,9 @@ export default function RoomPage() {
   const nickFromStore = useGameStore((s) => s.nickname);
   const [nickname, setNickname] = useState<string>("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     if (!isValidRoomCode(roomCode)) {
@@ -206,7 +210,7 @@ export default function RoomPage() {
   );
 
   return (
-    <main className="flex min-h-screen flex-col bg-slate-950 text-white">
+    <main className="flex min-h-screen flex-col bg-slate-950 text-white lg:h-screen lg:min-h-0 lg:overflow-hidden">
       <header className="flex items-center justify-between border-b border-white/10 bg-slate-900/60 px-6 py-3">
         <div className="flex items-center gap-4">
           <button
@@ -230,6 +234,13 @@ export default function RoomPage() {
             📋 Panel
           </button>
           <button
+            onClick={() => setGuideOpen(true)}
+            className="rounded-md border border-white/10 bg-slate-800 px-2 py-0.5 text-white/80 transition hover:bg-slate-700"
+            title="Bu harita nasıl oynanır?"
+          >
+            ❓ Rehber
+          </button>
+          <button
             onClick={() => setSettingsOpen(true)}
             className="rounded-md border border-white/10 bg-slate-800 px-2 py-0.5 text-white/80 transition hover:bg-slate-700"
             title="Oyun ayarları"
@@ -238,12 +249,28 @@ export default function RoomPage() {
           </button>
           {(me?.isHost || !state || state.phase === "lobby") && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 const inGame = state && state.phase !== "lobby";
-                const msg = inGame
-                  ? "Oyunu erken bitirmek istediğine emin misin? Tüm ilerleme silinir, herkes lobiye döner."
-                  : "Odayı sıfırla? Lobby ayarları korunur, board ve oyun ilerleyişi silinir.";
-                if (window.confirm(msg)) send({ t: "reset_room" });
+                const ok = await confirm(
+                  inGame
+                    ? {
+                        title: "Oyunu bitir?",
+                        body:
+                          "Mevcut oyun erken bitirilecek. Tüm ilerleme silinir ve herkes lobiye geri döner.",
+                        confirmLabel: "Oyunu bitir",
+                        cancelLabel: "Vazgeç",
+                        tone: "danger",
+                      }
+                    : {
+                        title: "Odayı sıfırla?",
+                        body:
+                          "Board ve oyun ilerleyişi silinir. Lobby ayarları (harita, zorluk, oyuncular) korunur.",
+                        confirmLabel: "Sıfırla",
+                        cancelLabel: "Vazgeç",
+                        tone: "warning",
+                      },
+                );
+                if (ok) send({ t: "reset_room" });
               }}
               className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200 transition hover:bg-rose-500/20"
               title={
@@ -267,14 +294,14 @@ export default function RoomPage() {
           />
           <span className="text-white/60">
             {conn === "open"
-              ? "bağlı"
+              ? "Bağlı"
               : conn === "connecting"
-              ? "bağlanıyor"
+              ? "Bağlanıyor"
               : conn === "closed"
-              ? "kapalı"
+              ? "Bağlantı kesildi"
               : conn === "error"
-              ? "hata"
-              : "boşta"}
+              ? "Bağlantı hatası"
+              : "Boşta"}
           </span>
         </div>
       </header>
@@ -291,6 +318,8 @@ export default function RoomPage() {
               roomCode={roomCode}
               onSetMap={(id) => send({ t: "set_map", mapTemplateId: id })}
               onSetDifficulty={(d) => send({ t: "set_difficulty", difficulty: d })}
+              onSetColor={(c) => send({ t: "set_color", color: c })}
+              onSetSettings={(s) => send({ t: "set_settings", settings: s })}
               onStart={() => send({ t: "start_game" })}
             />
           ) : (
@@ -360,22 +389,6 @@ export default function RoomPage() {
             />
           )}
           <LogPanel />
-          {me && (
-            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-sm">
-              <div className="mb-2 text-xs uppercase tracking-wider text-white/40">
-                Sen
-              </div>
-              <div className="flex items-center gap-3">
-                <ColorDot color={me.color} />
-                <span className="font-medium">{me.nickname}</span>
-                {me.isHost && (
-                  <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-300">
-                    Host
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
         </aside>
       </div>
 
@@ -389,6 +402,13 @@ export default function RoomPage() {
           }}
         />
       )}
+      {guideOpen && (
+        <GuideModal
+          state={state}
+          onClose={() => setGuideOpen(false)}
+        />
+      )}
+      {confirmDialog}
     </main>
   );
 }
@@ -398,12 +418,16 @@ function LobbyPanel({
   roomCode,
   onSetMap,
   onSetDifficulty,
+  onSetColor,
+  onSetSettings,
   onStart,
 }: {
   nickname: string;
   roomCode: string;
   onSetMap: (id: MapTemplateId) => void;
   onSetDifficulty: (d: import("@/game/types").Difficulty) => void;
+  onSetColor: (c: import("@/game/types").PlayerColor) => void;
+  onSetSettings: (s: Partial<import("@/game/types").GameSettings>) => void;
   onStart: () => void;
 }) {
   const state = useGameStore((s) => s.state);
@@ -544,6 +568,28 @@ function LobbyPanel({
         </div>
       </div>
 
+      <div className="w-full max-w-md space-y-2">
+        <div className="text-xs font-semibold tracking-wide text-white/50">
+          Galibiyet puanı hedefi
+        </div>
+        <VictoryPointPicker
+          state={state}
+          isHost={isHost}
+          onSetSettings={onSetSettings}
+        />
+      </div>
+
+      <div className="w-full max-w-md space-y-2">
+        <div className="text-xs font-semibold tracking-wide text-white/50">
+          Renk seç
+        </div>
+        <ColorPicker
+          state={state}
+          myId={selfId}
+          onSetColor={onSetColor}
+        />
+      </div>
+
       {isHost ? (
         <button
           onClick={onStart}
@@ -557,6 +603,251 @@ function LobbyPanel({
           Hostun başlatmasını bekliyorsun…
         </p>
       )}
+    </div>
+  );
+}
+
+// "How to play" modal. Renders the guide for the currently-selected
+// map template — every map has its own quirks (ships, fog, fortress
+// combat) so a one-size-fits-all rule sheet would mislead players.
+// Lobby colour picker. Each player owns one of 8 colours; another
+// player's pick is shown but disabled. Clicking your own colour does
+// nothing. Sends `set_color` to the server, which validates and rejects
+// duplicates server-side before broadcasting the change.
+const PLAYER_COLOR_OPTIONS: {
+  id: import("@/game/types").PlayerColor;
+  label: string;
+  hex: string;
+}[] = [
+  { id: "red", label: "Kırmızı", hex: "#e23b3b" },
+  { id: "blue", label: "Mavi", hex: "#2a76d6" },
+  { id: "orange", label: "Turuncu", hex: "#f08a2c" },
+  { id: "white", label: "Beyaz", hex: "#eeeeee" },
+  { id: "green", label: "Yeşil", hex: "#2da14a" },
+  { id: "brown", label: "Kahverengi", hex: "#8b5a2b" },
+  { id: "purple", label: "Mor", hex: "#9d3fc4" },
+  { id: "cyan", label: "Camgöbeği", hex: "#33c4d8" },
+];
+
+// Victory-points-to-win picker. Quick-pick chips for the most common
+// targets, plus a number input for anything else. "Otomatik" hands the
+// decision back to the map template + player-count scaling. Only the
+// host can change the value; everyone else sees the current setting.
+function VictoryPointPicker({
+  state,
+  isHost,
+  onSetSettings,
+}: {
+  state: import("@/game/types").GameState | null;
+  isHost: boolean;
+  onSetSettings: (s: Partial<import("@/game/types").GameSettings>) => void;
+}) {
+  const current = state?.settings.victoryPointsToWin ?? null;
+  const presets: { value: number | null; label: string; hint: string }[] = [
+    { value: null, label: "Otomatik", hint: "Harita ve oyuncu sayısına göre" },
+    { value: 8, label: "8", hint: "Çok hızlı oyun" },
+    { value: 10, label: "10", hint: "Klasik" },
+    { value: 12, label: "12", hint: "Standart uzun" },
+    { value: 15, label: "15", hint: "Çok uzun" },
+  ];
+
+  function clampVp(s: string): number | null {
+    const trimmed = s.trim();
+    if (!trimmed) return null;
+    const v = parseInt(trimmed, 10);
+    if (!Number.isFinite(v)) return null;
+    if (v < 3) return 3;
+    if (v > 20) return 20;
+    return v;
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {presets.map((p) => {
+          const active = (current ?? null) === p.value;
+          return (
+            <Tooltip key={String(p.value)} label={p.hint} side="top" width={180}>
+              <button
+                type="button"
+                disabled={!isHost}
+                onClick={() => onSetSettings({ victoryPointsToWin: p.value })}
+                className={`rounded-lg border px-3 py-1.5 text-sm transition ${
+                  active
+                    ? "border-amber-400 bg-amber-500/20 text-white"
+                    : "border-white/10 bg-slate-950/40 text-white/70 hover:border-white/30"
+                } ${!isHost && !active ? "cursor-not-allowed opacity-60" : ""}`}
+              >
+                {p.label}
+              </button>
+            </Tooltip>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-white/50">Özel:</span>
+        <input
+          type="number"
+          min={3}
+          max={20}
+          step={1}
+          disabled={!isHost}
+          value={current ?? ""}
+          placeholder="3–20"
+          onChange={(e) =>
+            onSetSettings({ victoryPointsToWin: clampVp(e.target.value) })
+          }
+          className="w-20 rounded-md border border-white/10 bg-slate-950 px-2 py-1 text-sm text-white outline-none focus:border-amber-300 disabled:opacity-60"
+        />
+        <span className="text-[10px] text-white/40">
+          puanına ulaşan kazanır
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ColorPicker({
+  state,
+  myId,
+  onSetColor,
+}: {
+  state: import("@/game/types").GameState | null;
+  myId: string | null;
+  onSetColor: (c: import("@/game/types").PlayerColor) => void;
+}) {
+  const me = state?.players.find((p) => p.id === myId);
+  const takenByOther = new Map<string, string>(); // colorId -> nickname
+  for (const p of state?.players ?? []) {
+    if (p.id !== myId) takenByOther.set(p.color, p.nickname);
+  }
+  return (
+    <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+      {PLAYER_COLOR_OPTIONS.map((opt) => {
+        const mine = me?.color === opt.id;
+        const taken = takenByOther.get(opt.id);
+        const disabled = !!taken || !me;
+        const tooltip = taken
+          ? `${taken} bu rengi seçti`
+          : mine
+          ? "Şu anki rengin"
+          : `${opt.label} olarak seç`;
+        return (
+          <Tooltip key={opt.id} label={tooltip} side="top" width={160}>
+            <button
+              type="button"
+              onClick={() => !disabled && !mine && onSetColor(opt.id)}
+              disabled={disabled}
+              aria-label={opt.label}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition ${
+                mine
+                  ? "ring-2 ring-amber-300 ring-offset-2 ring-offset-slate-900"
+                  : taken
+                  ? "cursor-not-allowed opacity-30 grayscale"
+                  : "hover:scale-110"
+              }`}
+              style={{ backgroundColor: opt.hex }}
+            >
+              {mine && (
+                <span className="text-sm font-bold text-slate-900">✓</span>
+              )}
+            </button>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
+
+function GuideModal({
+  state,
+  onClose,
+}: {
+  state: import("@/game/types").GameState | null;
+  onClose: () => void;
+}) {
+  const mapId = state?.mapTemplateId ?? "classic";
+  const guide = MAP_GUIDES[mapId] ?? MAP_GUIDES.classic;
+
+  // Effective VP target. If the game is already running, we trust
+  // state.rules.victoryPointsToWin (it's been computed once with all
+  // overrides). Otherwise we derive a preview from the host's settings,
+  // template default, and player count so the lobby matches what the
+  // game will actually start with.
+  let activeVp: number;
+  let vpExplanation: string;
+  if (state && state.phase !== "lobby") {
+    activeVp = state.rules.victoryPointsToWin;
+    vpExplanation = state.settings.victoryPointsToWin
+      ? "Host bu sayıyı manuel ayarladı."
+      : "Harita ve oyuncu sayısına göre otomatik belirlendi.";
+  } else if (state) {
+    if (state.settings.victoryPointsToWin != null) {
+      activeVp = state.settings.victoryPointsToWin;
+      vpExplanation = "Host bu sayıyı manuel ayarladı.";
+    } else {
+      const tpl = MAP_TEMPLATES[mapId];
+      let base = tpl.victoryPointsToWin ?? 10;
+      if (state.players.length >= 7) base += 2;
+      else if (state.players.length >= 5) base += 0;
+      if (state.difficulty === "easy") base = Math.max(8, base - 2);
+      else if (state.difficulty === "hard") base += 2;
+      activeVp = base;
+      vpExplanation = "Harita ve oyuncu sayısına göre otomatik belirlendi.";
+    }
+  } else {
+    activeVp = MAP_TEMPLATES[mapId].victoryPointsToWin ?? 10;
+    vpExplanation = "Harita varsayılanı.";
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-white">
+            ❓ {guide.title} — Nasıl oynanır?
+          </h3>
+          <button
+            onClick={onClose}
+            aria-label="Kapat"
+            className="rounded-md p-1 text-lg text-white/50 transition hover:bg-white/10 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3">
+          <span className="text-2xl">🏆</span>
+          <div>
+            <div className="text-sm font-semibold text-amber-200">
+              Galibiyet hedefi: {activeVp} puan
+            </div>
+            <div className="text-[11px] text-white/60">{vpExplanation}</div>
+          </div>
+        </div>
+
+        <p className="mb-4 text-xs text-white/50">
+          Aşağıdaki kurallar yalnızca bu harita içindir. Diğer haritaların
+          kuralları farklı olabilir — host harita değiştirdiğinde rehber
+          de güncellenir.
+        </p>
+        <div className="space-y-4 text-sm">
+          {guide.sections.map((s) => (
+            <section key={s.heading}>
+              <h4 className="mb-1 font-semibold text-amber-200">
+                {s.heading}
+              </h4>
+              <p className="leading-relaxed text-white/80">{s.body}</p>
+            </section>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -582,12 +873,27 @@ function SettingsModal({
   const [discard, setDiscard] = useState(String(cur.discardTimerSec));
   const [allowTrades, setAllowTrades] = useState(cur.allowPlayerTrades);
   const [turnSound, setTurnSound] = useState(cur.turnSound);
+  // VP target: empty string means "use template default" (null on the
+  // wire). Any other input is parsed as a number on save.
+  const [vpTarget, setVpTarget] = useState(
+    cur.victoryPointsToWin == null ? "" : String(cur.victoryPointsToWin),
+  );
 
   function clamp(s: string): number {
     const v = parseInt(s, 10);
     if (!Number.isFinite(v) || v <= 0) return 0;
     if (v < 10) return 10;
     if (v > 600) return 600;
+    return v;
+  }
+
+  function clampVp(s: string): number | null {
+    const trimmed = s.trim();
+    if (!trimmed) return null;
+    const v = parseInt(trimmed, 10);
+    if (!Number.isFinite(v)) return null;
+    if (v < 3) return 3;
+    if (v > 20) return 20;
     return v;
   }
 
@@ -598,6 +904,7 @@ function SettingsModal({
       discardTimerSec: clamp(discard),
       allowPlayerTrades: allowTrades,
       turnSound,
+      victoryPointsToWin: clampVp(vpTarget),
     });
     onClose();
   }
@@ -628,6 +935,33 @@ function SettingsModal({
         )}
 
         <div className="space-y-3">
+          <label className="block">
+            <div className="mb-1 flex items-baseline justify-between">
+              <span className="text-sm font-semibold text-white/90">
+                Galibiyet puanı hedefi
+              </span>
+              <span className="text-[10px] text-white/40">
+                3–20 (boş = harita varsayılanı)
+              </span>
+            </div>
+            <input
+              type="number"
+              min={3}
+              max={20}
+              step={1}
+              value={vpTarget}
+              disabled={!isHost}
+              placeholder="Otomatik"
+              onChange={(e) => setVpTarget(e.target.value)}
+              className="w-full rounded-md border border-white/10 bg-slate-950 px-3 py-1.5 text-sm text-white outline-none focus:border-amber-300 disabled:opacity-60"
+            />
+            <p className="mt-1 text-[10px] text-white/40">
+              Bu sayıya ulaşan ilk oyuncu kazanır. Boş bırakırsan harita
+              ve oyuncu sayısına göre otomatik ayarlanır (klasik 10, bazı
+              senaryolar 11–13, 7+ oyuncuda +2).
+            </p>
+          </label>
+
           <TimerField
             label="Sıra süresi"
             value={turn}
@@ -771,7 +1105,7 @@ function ActiveTradePanel({
   const ICON: Record<string, string> = {
     wood: "🌲",
     brick: "🧱",
-    wheat: "🌾",
+    wheat: "🍞",
     sheep: "🐑",
     ore: "⛏️",
   };
@@ -931,12 +1265,34 @@ function ChatPanel({
   const messages = useGameStore((s) => s.chat);
   const [text, setText] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Gartic-style: pressing TAB anywhere on the page jumps focus into
+  // the chat input. Skipped if the user is already typing into another
+  // input (settings modal, lobby fields, etc.) so tabbing through forms
+  // still works as usual.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Tab") return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      const isFormField =
+        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+        (t?.isContentEditable ?? false);
+      if (isFormField) return;
+      if (!inputRef.current) return;
+      e.preventDefault();
+      inputRef.current.focus();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function send() {
     const trimmed = text.trim();
@@ -981,14 +1337,18 @@ function ChatPanel({
       </div>
       <div className="flex gap-1 border-t border-white/10 p-2">
         <input
+          ref={inputRef}
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") send();
+            // Pressing TAB inside the input releases focus back to the
+            // page (the global handler will pull it back here on the
+            // NEXT TAB press).
           }}
           maxLength={280}
-          placeholder="Mesaj yaz…"
+          placeholder="Mesaj yaz… (TAB)"
           className="flex-1 rounded bg-slate-950/80 px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-400"
         />
         <button
