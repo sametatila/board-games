@@ -92,7 +92,9 @@ export function GameView({
   >(null);
   // Cards that just got spent — used to play a brief "fly off" animation.
   const [flyingCards, setFlyingCards] = useState<Resource[]>([]);
-  const lastSeenRollRef = useRef<string | null>(null);
+  // Initial value "__init__" lets the dice effect tell "first render"
+  // apart from "dice were just cleared at end of turn".
+  const lastSeenRollRef = useRef<string | null>("__init__");
   const lastLogIdRef = useRef<string | null>(null);
   // Track the last pointer-down screen position so build animations can fly
   // toward where the user actually clicked (the chosen vertex/edge).
@@ -109,23 +111,26 @@ export function GameView({
   // When server-side diceRoll changes (i.e. a new roll happened), show the
   // modal. On first mount we silently absorb whatever roll is already in
   // the snapshot — otherwise refreshing the page or coming back from the
-  // lobby would replay the previous turn's animation.
+  // lobby would replay the previous turn's animation. We use a sentinel
+  // value ("__init__") instead of null so the absorb-on-mount logic can
+  // distinguish "we just mounted" from "the dice were cleared between
+  // turns", which legitimately happens every turn.
   useEffect(() => {
-    if (!state.diceRoll) {
-      lastSeenRollRef.current = null;
-      return;
-    }
-    const key = `${state.diceRoll[0]},${state.diceRoll[1]},${state.currentPlayerIndex}`;
-    // First snapshot of this session: remember the key but DON'T play
-    // the animation. Only subsequent dice changes count as "new rolls".
-    if (lastSeenRollRef.current === null) {
+    const key = state.diceRoll
+      ? `${state.diceRoll[0]},${state.diceRoll[1]},${state.currentPlayerIndex}`
+      : null;
+    // First snapshot of this session — remember whatever's there
+    // (including null) so the next change is treated as a real roll.
+    if (lastSeenRollRef.current === "__init__") {
       lastSeenRollRef.current = key;
       return;
     }
     if (lastSeenRollRef.current === key) return;
     lastSeenRollRef.current = key;
-    setDiceModalRoll(state.diceRoll);
-    sfx.diceRoll();
+    if (state.diceRoll) {
+      setDiceModalRoll(state.diceRoll);
+      sfx.diceRoll();
+    }
   }, [state.diceRoll, state.currentPlayerIndex]);
 
   // SFX based on log changes (cheap pattern matching).

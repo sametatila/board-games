@@ -999,7 +999,10 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
         // they don't dominate next to land. Y offset is tuned so the
         // sprite's painted base sits just above the sea, not floating.
         const isGeneric = port.kind === "any";
-        const portSize = isGeneric ? 0.69 : 0.483;
+        // 3:1 (generic, painted on 10.png) keeps its baseline 0.69 size;
+        // resource 2:1 ports were 30% smaller than generic, so we bump
+        // them up 20% to bring them back closer in scale.
+        const portSize = isGeneric ? 0.69 : 0.58;
         const portY = portSize / 2;
 
         // Two boardwalks — one from each shore corner of the edge out to
@@ -1053,7 +1056,15 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
             </Suspense>
 
             <Billboard
-              position={[dockCenter.x, HEX_HEIGHT_SEA + portSize * 0.95, dockCenter.z]}
+              position={[
+                dockCenter.x,
+                // 3:1 (10.png) keeps the original label height. The
+                // resource 2:1 sprites have shorter banners, so the
+                // label needs an extra lift so it sits clearly above
+                // the painted dock instead of crowding it.
+                HEX_HEIGHT_SEA + portSize * (isGeneric ? 0.95 : 1.15),
+                dockCenter.z,
+              ]}
             >
               <mesh>
                 <planeGeometry args={[0.32, 0.18]} />
