@@ -1,36 +1,115 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sunny Harbor
 
-## Getting Started
+Tarayıcıda 8 oyuncuya kadar Catan-tarzı bir hex tabanlı strateji oyunu.
+Klasik tek-ada haritasından gemi/keşif/korsan içeren çok-ada senaryolarına
+kadar 6 farklı harita içerir. Server-authoritative: PartyKit ([Cloudflare
+Workers](https://workers.cloudflare.com/) üzerinde) bir oda = bir Durable
+Object, oyun durumu reducer ile orada güncellenir. Frontend Next.js 16 (App
+Router) + Three.js + react-three-fiber.
 
-First, run the development server:
+## Hızlı başlangıç (geliştirme)
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.local.example .env.local
+npm run dev:all          # Next dev (port 3000) + PartyKit dev (port 1999)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Tarayıcıda `http://localhost:3000` aç → takma ad gir → "Yeni oda kur" → kodu
+arkadaşlarına paylaş.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+İki sunucu ayrı çalışır:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev              # Next.js (frontend)
+npm run dev:party        # PartyKit (multiplayer state server)
+```
 
-## Learn More
+## Test
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx tsc --noEmit                       # type check
+npx next build                         # production build
+npx tsx scripts/reducer_smoke.ts       # 2-oyuncu setup + zar + robber akışı
+npx tsx scripts/templates_test.ts      # 6 harita × 3 oyuncu sayısı generate test
+node scripts/full_game_smoke.mjs       # PartyKit'e karşı end-to-end (party'nin çalışıyor olması gerek)
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Üretim (production deploy)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+İki ayrı servis: **frontend Vercel'de**, **multiplayer server PartyKit'te
+(Cloudflare)**. Her ikisinin de ücretsiz tier'i bu proje için yeterli.
 
-## Deploy on Vercel
+### 1. PartyKit'i deploy et
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+# Cloudflare hesabı + PartyKit auth (ilk kez):
+npx partykit login
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Deploy:
+npm run deploy:party
+# Çıktıda şuna benzer bir URL görünür:
+#   ✓ Deployed to https://sunny-harbor.<your-account>.partykit.dev
+```
+
+URL'i not al — Vercel env'inde lazım olacak (protokolsüz).
+
+### 2. Vercel'e deploy
+
+Repo'yu GitHub'a push'la ve [vercel.com/new](https://vercel.com/new)'den
+import et. Build ayarları otomatik (Next.js detect eder).
+
+**Environment variables** (Vercel dashboard → Settings → Environment Variables):
+
+| Key | Value | Scope |
+|---|---|---|
+| `NEXT_PUBLIC_PARTYKIT_HOST` | `sunny-harbor.<your-account>.partykit.dev` | Production |
+
+`NEXT_PUBLIC_` prefix'i Next.js'in client'a expose etmesi için gerekli.
+
+### 3. Deploy sonrası
+
+- Vercel'in verdiği `https://<proje>.vercel.app` URL'ine git → ana sayfa
+  açılırsa frontend OK
+- Yeni oda kur → board görünüyorsa PartyKit bağlantısı OK
+- Arkadaşlarına oda kodunu yolla, gerçek zamanlı katılsınlar
+
+### Sorun giderme
+
+- "Sunucudan oda durumu bekleniyor" mesajında takılı kalıyorsa: tarayıcı
+  konsolunda WebSocket hatası ara. PartyKit URL'i yanlış olabilir.
+- "Oyun başlamış, izleyici olarak bağlandın" — başkası odayı zaten kurmuş.
+  "↻ Sıfırla" butonuyla temizleyebilirsin (host gerek).
+- PartyKit free tier'i ayda 10K istek/100GB transfer; 8 oyunculu bir oyun
+  ortalama ~50 mesaj/dakika atar, normal kullanımda yetip artar.
+
+## Mimari
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Client (Vercel/Next.js)                                 │
+│  src/components/Board3D.tsx     ← three.js render       │
+│  src/components/GameView.tsx    ← UI, action dispatch   │
+│  src/lib/store.ts               ← zustand state         │
+│  src/lib/useParty.ts            ← WebSocket client      │
+└─────────────────────────────────────────────────────────┘
+                       │ WSS (PartyKit protocol)
+                       ▼
+┌─────────────────────────────────────────────────────────┐
+│ Server (PartyKit/Cloudflare Durable Object per room)    │
+│  party/index.ts                 ← message handler       │
+│  src/game/reducer.ts            ← pure state reducer    │
+│  src/game/board.ts              ← board generation      │
+│  src/game/mapTemplates.ts       ← 6 map definitions     │
+└─────────────────────────────────────────────────────────┘
+```
+
+Reducer ve types client+server arasında **paylaşılan kod**, böylece tek
+source of truth. Server tüm action'ları validate eder, snapshot broadcast
+eder. State PartyKit Durable Object storage'da persist olur (oda boş bile
+olsa kaybolmaz; reset için "↻ Sıfırla" butonu var).
+
+## Telif
+
+Sunny Harbor kişisel bir proje, Catan® markasıyla bağlantılı değildir.
+Yalnızca arkadaş çevresinde kullanım için tasarlandı.
