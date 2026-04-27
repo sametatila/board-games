@@ -1998,6 +1998,9 @@ function TradeModal({
   const [receive, setReceive] = useState<Record<Resource, number>>({
     wood: 0, brick: 0, wheat: 0, sheep: 0, ore: 0,
   });
+  // One-shot guard so a fast double-click doesn't fire two OFFER_TRADE
+  // actions before the modal closes / state updates.
+  const submittedRef = useRef(false);
 
   function adj(
     setter: typeof setGive,
@@ -2066,6 +2069,8 @@ function TradeModal({
             </div>
             <button
               onClick={() => {
+                if (submittedRef.current) return;
+                submittedRef.current = true;
                 sendAction({
                   type: "OFFER_TRADE",
                   playerId: me.id,
@@ -2081,6 +2086,7 @@ function TradeModal({
                 onClose();
               }}
               disabled={
+                submittedRef.current ||
                 Object.values(give).reduce((a, b) => a + b, 0) === 0 ||
                 Object.values(receive).reduce((a, b) => a + b, 0) === 0
               }

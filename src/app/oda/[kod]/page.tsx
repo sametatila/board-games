@@ -1502,14 +1502,36 @@ function LogPanel() {
   // Authoritative event log lives on the snapshot (state.log) —
   // every move the reducer recorded since the game started.
   const log = useGameStore((s) => s.state?.log) ?? [];
-  // Match the chat panel's reading order: oldest → newest top to
-  // bottom, with auto-scroll keeping the latest visible at the foot.
-  const recent = log.slice(-50);
+  // Render in chronological order (oldest → newest top to bottom),
+  // matching how a chat reads. Dedupe on `id` defensively in case the
+  // server ever ships overlapping snapshots/patches that share an
+  // entry (rare but harmless to guard against).
+  const recent = useMemo(() => {
+    const seen = new Set<string>();
+    const out: typeof log = [];
+    for (const e of log.slice(-50)) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+    }
+    return out;
+  }, [log]);
   const listRef = useRef<ScrollableHandle | null>(null);
+  const lastIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    listRef.current?.scrollToBottom();
-  }, [log.length]);
+    const last = recent[recent.length - 1];
+    if (!last || last.id === lastIdRef.current) return;
+    lastIdRef.current = last.id;
+    // Defer to the next frame so the freshly-appended row has been
+    // laid out before we measure scrollHeight. Without the rAF the
+    // scroll target was sometimes the previous content height and
+    // the latest entry stayed cropped at the bottom.
+    const handle = requestAnimationFrame(() => {
+      listRef.current?.scrollToBottom();
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [recent]);
 
   return (
     <div className="flex flex-col rounded-2xl border border-white/10 bg-slate-900/60">

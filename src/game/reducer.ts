@@ -2302,6 +2302,19 @@ function allBoardEdgeIds(state: GameState): string[] {
   return [...set];
 }
 
+// Same as `allBoardEdgeIds` but also walks every sea hex's edges, so
+// open-water edges (both adjacent hexes are sea) are visible to ship
+// placement. Roads use `allBoardEdgeIds`; ships need this one or the
+// chain can never leave the coast.
+function allBoardEdgeIdsIncludingSea(state: GameState): string[] {
+  const set = new Set<string>();
+  for (const h of state.hexes) {
+    if (h.terrain === "fog") continue;
+    for (const e of hexEdgeIds(h.coord)) set.add(e);
+  }
+  return [...set];
+}
+
 // Public: vertices where this player can legally place a NEW settlement right now.
 export function getValidSettlementVertices(
   state: GameState,
@@ -2334,7 +2347,7 @@ export function getValidShipEdges(
   state: GameState,
   playerId: string,
 ): string[] {
-  return allBoardEdgeIds(state).filter(
+  return allBoardEdgeIdsIncludingSea(state).filter(
     (eId) => isValidShipPlacement(state, eId, playerId).ok,
   );
 }
