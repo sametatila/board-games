@@ -9,7 +9,7 @@ import {
   edgeEndpointVertices,
   vertexEdges,
   spiralOf,
-} from "../src/game/hex";
+} from "../src/games/sunny-harbor/hex";
 
 const groundHexes = spiralOf({ q: 0, r: 0 }, 4);
 const hexes = spiralOf({ q: 0, r: 0 }, 2);

@@ -11,12 +11,12 @@ import {
   DEV_CARD_NAMES_TR,
   DEV_CARD_LONG_DESC_TR,
 } from "./CardArt";
-import { Tooltip, TitledTooltip } from "./Tooltip";
-import { sfx, isMuted, setMuted } from "@/lib/sfx";
-import { recordGame } from "@/lib/stats";
-import { useGameStore } from "@/lib/store";
-import { BUILD_COSTS, DEV_CARD_COST, type GameAction } from "@/game/actions";
-import type { GameState, Player, Resource } from "@/game/types";
+import { Tooltip, TitledTooltip } from "@/platform/ui/Tooltip";
+import { sfx, isMuted, setMuted } from "@/platform/sfx";
+import { recordGame } from "@/platform/stats";
+import { useGameStore } from "@/platform/store";
+import { BUILD_COSTS, DEV_CARD_COST, type GameAction } from "@/games/sunny-harbor/actions";
+import type { GameState, Player, Resource } from "@/games/sunny-harbor/types";
 import {
   setupTurnInfo,
   getRobberyVictims,
@@ -28,7 +28,7 @@ import {
   getValidPirateHexes,
   lastInitialSettlementForPlayer,
   bestBankRatio,
-} from "@/game/reducer";
+} from "@/games/sunny-harbor/reducer";
 
 const RESOURCE_ICONS: Record<Resource, string> = {
   wood: "🌲",
@@ -194,17 +194,20 @@ export function GameView({
     if (!state.winnerId || !me || isSpectator) return;
     const won = state.winnerId === me.id;
     recordGame({
-      finishedAt: Date.now(),
-      result: won ? "win" : "loss",
-      vp: me.victoryPoints,
-      playerCount: state.players.length,
-      mapTemplateId: state.mapTemplateId,
-      difficulty: state.difficulty,
-      nickname: me.nickname,
       gameKey: `${state.roomCode}:${state.winnerId}:${state.players
         .map((p) => p.id)
         .sort()
         .join(",")}`,
+      game: "sunny-harbor",
+      finishedAt: Date.now(),
+      result: won ? "win" : "loss",
+      finalScore: me.victoryPoints,
+      playerCount: state.players.length,
+      nickname: me.nickname,
+      metadata: {
+        mapTemplateId: state.mapTemplateId,
+        difficulty: state.difficulty,
+      },
     });
   }, [state.winnerId, me, isSpectator, state.players, state.mapTemplateId, state.difficulty, state.roomCode]);
 
@@ -1438,7 +1441,7 @@ function DevCardButton({
   progressLabel,
   onClick,
 }: {
-  kind: import("@/game/types").DevelopmentCard;
+  kind: import("@/games/sunny-harbor/types").DevelopmentCard;
   count: number;
   enabled: boolean;
   active?: boolean;
@@ -1538,7 +1541,7 @@ function HandFan({
     devCounts[k] = (devCounts[k] ?? 0) + 1;
   }
   const vpCount = me.hiddenVictoryPoints ?? 0;
-  const devStacks: { kind: import("@/game/types").DevelopmentCard; count: number }[] = [];
+  const devStacks: { kind: import("@/games/sunny-harbor/types").DevelopmentCard; count: number }[] = [];
   for (const k of ["knight", "road_building", "year_of_plenty", "monopoly"] as const) {
     if ((devCounts[k] ?? 0) > 0) devStacks.push({ kind: k, count: devCounts[k] });
   }
@@ -1568,7 +1571,7 @@ function HandFan({
     | { type: "resource"; kind: Resource; count: number }
     | {
         type: "dev";
-        kind: import("@/game/types").DevelopmentCard;
+        kind: import("@/games/sunny-harbor/types").DevelopmentCard;
         count: number;
         playable: boolean;
         active: boolean;
@@ -1576,7 +1579,7 @@ function HandFan({
       }
     | {
         type: "dev_pending";
-        kind: import("@/game/types").DevelopmentCard;
+        kind: import("@/games/sunny-harbor/types").DevelopmentCard;
       };
 
   // Order: dev cards (and pending dev) on the LEFT, resources on the

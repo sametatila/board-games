@@ -7,16 +7,16 @@ import {
   loadStoredNickname,
   saveLastRoomCode,
   saveNickname,
-} from "@/lib/store";
-import { useParty } from "@/lib/useParty";
-import { isValidRoomCode } from "@/game/roomCode";
-import type { MapTemplateId } from "@/game/types";
-import type { GameAction } from "@/game/actions";
-import { Countdown, GameViewContainer, PlayerScores } from "@/components/GameView";
-import { Tooltip } from "@/components/Tooltip";
-import { useConfirm } from "@/components/ConfirmDialog";
-import { Scrollable, type ScrollableHandle } from "@/components/Scrollable";
-import { setMuted, isMuted } from "@/lib/sfx";
+} from "@/platform/store";
+import { useParty } from "@/games/sunny-harbor/useParty";
+import { isValidRoomCode } from "@/platform/roomCode";
+import type { MapTemplateId } from "@/games/sunny-harbor/types";
+import type { GameAction } from "@/games/sunny-harbor/actions";
+import { Countdown, GameViewContainer, PlayerScores } from "@/games/sunny-harbor/components/GameView";
+import { Tooltip } from "@/platform/ui/Tooltip";
+import { useConfirm } from "@/platform/ui/ConfirmDialog";
+import { Scrollable, type ScrollableHandle } from "@/platform/ui/Scrollable";
+import { setMuted, isMuted } from "@/platform/sfx";
 
 function ClientOnly({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -172,7 +172,7 @@ function ErrorToast() {
 
 // Map metadata is now sourced from the canonical MAP_TEMPLATES so the lobby
 // stays in sync with the gameplay rules (ships, win condition, etc.).
-import { MAP_TEMPLATES, MAP_GUIDES } from "@/game/mapTemplates";
+import { MAP_TEMPLATES, MAP_GUIDES } from "@/games/sunny-harbor/mapTemplates";
 
 const MAP_OPTIONS: { id: MapTemplateId; label: string; description: string }[] =
   (Object.keys(MAP_TEMPLATES) as MapTemplateId[]).map((id) => ({
@@ -264,7 +264,7 @@ export default function RoomPage() {
     // the lobby. Missing nickname is handled inline below so a shared
     // invite link doesn't dump the recipient on the home page.
     if (!isValidRoomCode(roomCode)) {
-      router.replace("/");
+      router.replace("/sunny-harbor");
       return;
     }
     // Remember this room so the lobby can offer a one-tap rejoin if the
@@ -296,11 +296,11 @@ export default function RoomPage() {
       <header className="flex items-center justify-between border-b border-white/10 bg-slate-900/60 px-6 py-3">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/sunny-harbor")}
             className="text-xs text-white/60 hover:text-white"
-            title="Anasayfaya çık (oda burada açık kalır, geri dönebilirsin)"
+            title="Sunny Harbor lobisine çık (oda burada açık kalır, geri dönebilirsin)"
           >
-            ← Anasayfa
+            ← Lobi
           </button>
           <h1 className="text-lg font-semibold">Sunny Harbor</h1>
           <span className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-sm tracking-[0.3em]">
@@ -520,9 +520,9 @@ function LobbyPanel({
   nickname: string;
   roomCode: string;
   onSetMap: (id: MapTemplateId) => void;
-  onSetDifficulty: (d: import("@/game/types").Difficulty) => void;
-  onSetColor: (c: import("@/game/types").PlayerColor) => void;
-  onSetSettings: (s: Partial<import("@/game/types").GameSettings>) => void;
+  onSetDifficulty: (d: import("@/games/sunny-harbor/types").Difficulty) => void;
+  onSetColor: (c: import("@/games/sunny-harbor/types").PlayerColor) => void;
+  onSetSettings: (s: Partial<import("@/games/sunny-harbor/types").GameSettings>) => void;
   onStart: () => void;
 }) {
   const state = useGameStore((s) => s.state);
@@ -710,7 +710,7 @@ function LobbyPanel({
 // nothing. Sends `set_color` to the server, which validates and rejects
 // duplicates server-side before broadcasting the change.
 const PLAYER_COLOR_OPTIONS: {
-  id: import("@/game/types").PlayerColor;
+  id: import("@/games/sunny-harbor/types").PlayerColor;
   label: string;
   hex: string;
 }[] = [
@@ -733,9 +733,9 @@ function VictoryPointPicker({
   isHost,
   onSetSettings,
 }: {
-  state: import("@/game/types").GameState | null;
+  state: import("@/games/sunny-harbor/types").GameState | null;
   isHost: boolean;
-  onSetSettings: (s: Partial<import("@/game/types").GameSettings>) => void;
+  onSetSettings: (s: Partial<import("@/games/sunny-harbor/types").GameSettings>) => void;
 }) {
   const current = state?.settings.victoryPointsToWin ?? null;
   const presets: { value: number | null; label: string; hint: string }[] = [
@@ -807,9 +807,9 @@ function ColorPicker({
   myId,
   onSetColor,
 }: {
-  state: import("@/game/types").GameState | null;
+  state: import("@/games/sunny-harbor/types").GameState | null;
   myId: string | null;
-  onSetColor: (c: import("@/game/types").PlayerColor) => void;
+  onSetColor: (c: import("@/games/sunny-harbor/types").PlayerColor) => void;
 }) {
   const me = state?.players.find((p) => p.id === myId);
   const takenByOther = new Map<string, string>(); // colorId -> nickname
@@ -858,7 +858,7 @@ function GuideModal({
   state,
   onClose,
 }: {
-  state: import("@/game/types").GameState | null;
+  state: import("@/games/sunny-harbor/types").GameState | null;
   onClose: () => void;
 }) {
   const mapId = state?.mapTemplateId ?? "classic";
@@ -957,10 +957,10 @@ function SettingsModal({
   onClose,
   onSave,
 }: {
-  state: import("@/game/types").GameState;
+  state: import("@/games/sunny-harbor/types").GameState;
   isHost: boolean;
   onClose: () => void;
-  onSave: (s: Partial<import("@/game/types").GameSettings>) => void;
+  onSave: (s: Partial<import("@/games/sunny-harbor/types").GameSettings>) => void;
 }) {
   const cur = state.settings;
   const [turn, setTurn] = useState(String(cur.turnTimerSec));
@@ -1179,7 +1179,7 @@ function ActiveTradePanel({
   onFinalize,
   onCancel,
 }: {
-  state: import("@/game/types").GameState;
+  state: import("@/games/sunny-harbor/types").GameState;
   myId: string | null;
   onAccept: () => void;
   onReject: () => void;
@@ -1190,7 +1190,7 @@ function ActiveTradePanel({
   const offerer = state.players.find((p) => p.id === trade.fromPlayerId);
   const isOfferer = trade.fromPlayerId === myId;
   const me = state.players.find((p) => p.id === myId);
-  const order: import("@/game/types").Resource[] = [
+  const order: import("@/games/sunny-harbor/types").Resource[] = [
     "wood",
     "brick",
     "wheat",

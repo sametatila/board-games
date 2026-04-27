@@ -17,14 +17,14 @@ import {
   edgeEndpointVertices,
   hexEdgeIds,
   hexVertexIds,
-} from "@/game/hex";
+} from "@/games/sunny-harbor/hex";
 import type {
   BuiltPiece,
   Hex,
   HexTerrain,
   Player,
   Port,
-} from "@/game/types";
+} from "@/games/sunny-harbor/types";
 
 export type PlacementMode =
   | null
@@ -78,7 +78,7 @@ const HEX_HEIGHT_SEA = 0.05;
 // looks like a real game instead of placeholder primitives. Models share
 // a single colormap.png atlas and are pre-baked at hex unit ≈ 1 world
 // unit, which lines up perfectly with our HEX_SIZE.
-const KIT = "/assets/hexagon-kit/Models/GLB%20format";
+const KIT = "/assets/sunny-harbor/hexagon-kit/Models/GLB%20format";
 const ASSET = {
   // Flat 3D base under every painted hex sprite for genuine depth.
   hex_base_dirt: `${KIT}/dirt.glb`,
@@ -109,23 +109,23 @@ const ASSET = {
 // but we lay them flat on the hex top so they read as decoration painted
 // onto the surface.
 const SPRITES = {
-  hex_wood: "/assets/sprites/hex-wood.png",
-  hex_brick: "/assets/sprites/hex-brick.png",
-  hex_wheat: "/assets/sprites/hex-wheat.png",
-  hex_sheep: "/assets/sprites/hex-sheep.png",
-  hex_ore: "/assets/sprites/hex-rock.png",
-  hex_desert: "/assets/sprites/hex-desert.png",
-  hex_gold: "/assets/sprites/hex-gold.png",
-  hex_fog: "/assets/sprites/hex-fog.png",
-  port_any: "/assets/sprites/10.png",
-  port_wood: "/assets/sprites/port-wood.png",
-  port_brick: "/assets/sprites/port-brick.png",
-  port_wheat: "/assets/sprites/port-weed.png",
-  port_sheep: "/assets/sprites/port-sheep.png",
-  port_ore: "/assets/sprites/port-rock.png",
-  pirate_castle: "/assets/sprites/pirate-castle.png",
-  thief: "/assets/sprites/thief.png",
-  pirate: "/assets/sprites/pirate.png",
+  hex_wood: "/assets/sunny-harbor/sprites/hex-wood.png",
+  hex_brick: "/assets/sunny-harbor/sprites/hex-brick.png",
+  hex_wheat: "/assets/sunny-harbor/sprites/hex-wheat.png",
+  hex_sheep: "/assets/sunny-harbor/sprites/hex-sheep.png",
+  hex_ore: "/assets/sunny-harbor/sprites/hex-rock.png",
+  hex_desert: "/assets/sunny-harbor/sprites/hex-desert.png",
+  hex_gold: "/assets/sunny-harbor/sprites/hex-gold.png",
+  hex_fog: "/assets/sunny-harbor/sprites/hex-fog.png",
+  port_any: "/assets/sunny-harbor/sprites/10.png",
+  port_wood: "/assets/sunny-harbor/sprites/port-wood.png",
+  port_brick: "/assets/sunny-harbor/sprites/port-brick.png",
+  port_wheat: "/assets/sunny-harbor/sprites/port-weed.png",
+  port_sheep: "/assets/sunny-harbor/sprites/port-sheep.png",
+  port_ore: "/assets/sunny-harbor/sprites/port-rock.png",
+  pirate_castle: "/assets/sunny-harbor/sprites/pirate-castle.png",
+  thief: "/assets/sunny-harbor/sprites/thief.png",
+  pirate: "/assets/sunny-harbor/sprites/pirate.png",
 } as const;
 
 // Every sea-style tile uses the plain water mesh. The hex id argument

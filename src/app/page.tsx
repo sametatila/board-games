@@ -1,188 +1,117 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  generateRoomCode,
-  isValidRoomCode,
-  normalizeRoomCode,
-} from "@/game/roomCode";
-import {
-  loadStoredNickname,
-  saveNickname,
-  useGameStore,
-  loadLastRoomCode,
-  clearLastRoomCode,
-} from "@/lib/store";
+import { allGames } from "@/platform/registry";
+import type { GameId } from "@/platform/types";
+
+const GAME_THEME: Record<GameId, { emoji: string; accent: string; gradient: string }> = {
+  "sunny-harbor": {
+    emoji: "🏝️",
+    accent: "from-amber-500 to-rose-500",
+    gradient: "from-amber-500/15 via-rose-500/10 to-slate-900/0",
+  },
+  splendor: {
+    emoji: "💎",
+    accent: "from-emerald-500 to-cyan-500",
+    gradient: "from-emerald-500/15 via-cyan-500/10 to-slate-900/0",
+  },
+  "ticket-to-ride": {
+    emoji: "🚂",
+    accent: "from-rose-500 to-indigo-500",
+    gradient: "from-rose-500/15 via-indigo-500/10 to-slate-900/0",
+  },
+};
 
 export default function HomePage() {
-  const router = useRouter();
-  const setNickname = useGameStore((s) => s.setNickname);
-  const [nick, setNick] = useState("");
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [lastRoom, setLastRoom] = useState<string | null>(null);
-
-  useEffect(() => {
-    const stored = loadStoredNickname();
-    if (stored) setNick(stored);
-    setLastRoom(loadLastRoomCode());
-  }, []);
-
-  function commitNickname(): string | null {
-    const trimmed = nick.trim();
-    if (trimmed.length < 2) {
-      setError("En az 2 karakter takma ad gir.");
-      return null;
-    }
-    if (trimmed.length > 24) {
-      setError("Takma ad 24 karakteri geçemez.");
-      return null;
-    }
-    saveNickname(trimmed);
-    setNickname(trimmed);
-    return trimmed;
-  }
-
-  function handleCreate() {
-    setError(null);
-    if (!commitNickname()) return;
-    const room = generateRoomCode();
-    router.push(`/oda/${room}`);
-  }
-
-  function handleJoin() {
-    setError(null);
-    if (!commitNickname()) return;
-    const normalized = normalizeRoomCode(code);
-    if (!isValidRoomCode(normalized)) {
-      setError("Oda kodu 6 karakter olmalı.");
-      return;
-    }
-    router.push(`/oda/${normalized}`);
-  }
-
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-6 text-white">
-      <div className="w-full max-w-md space-y-6 rounded-3xl border border-white/10 bg-slate-900/60 p-8 shadow-2xl backdrop-blur">
-        <header className="space-y-1 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight">Sunny Harbor</h1>
-          <p className="text-sm text-white/60">
-            Arkadaşlarınla 8 kişiye kadar hex tabanlı keşif oyunu.
-          </p>
-        </header>
-
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-wider text-white/50">
-            Takma ad
-          </label>
-          <input
-            value={nick}
-            onChange={(e) => setNick(e.target.value)}
-            placeholder="Örn. Mehmet"
-            maxLength={24}
-            className="w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3 outline-none focus:border-indigo-400"
-          />
-        </div>
-
-        {lastRoom && (
-          <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3">
-            <div className="text-xs uppercase tracking-wider text-emerald-200/80">
-              Son aktif odan
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setError(null);
-                  if (!commitNickname()) return;
-                  router.push(`/oda/${lastRoom}`);
-                }}
-                className="flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-left font-mono text-lg tracking-[0.4em] text-white transition hover:bg-emerald-400"
-                title="Bu odaya geri dön"
-              >
-                ↩ {lastRoom}
-              </button>
-              <button
-                onClick={() => {
-                  clearLastRoomCode();
-                  setLastRoom(null);
-                }}
-                className="rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-xs text-white/60 hover:bg-slate-700"
-                title="Bu kısayolu unut"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-[11px] text-white/50">
-              Aynı takma adla geri girdiğinde kaldığın yerden devam edersin.
-            </p>
-          </div>
-        )}
-
-        <button
-          onClick={handleCreate}
-          className="w-full rounded-xl bg-indigo-500 py-3 font-semibold transition hover:bg-indigo-400"
-        >
-          Yeni oda kur
-        </button>
-
-        <div className="flex items-center gap-3 text-xs text-white/40">
-          <div className="h-px flex-1 bg-white/10" />
-          veya
-          <div className="h-px flex-1 bg-white/10" />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-wider text-white/50">
-            Oda koduyla katıl
-          </label>
-          <div className="flex gap-2">
-            <input
-              value={code}
-              onChange={(e) => setCode(normalizeRoomCode(e.target.value))}
-              onPaste={(e) => {
-                e.preventDefault();
-                const pasted = e.clipboardData.getData("text");
-                setCode(normalizeRoomCode(pasted));
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleJoin();
-              }}
-              placeholder="ABCDEF"
-              maxLength={6}
-              autoComplete="off"
-              spellCheck={false}
-              className="flex-1 rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3 font-mono text-lg uppercase tracking-[0.4em] outline-none focus:border-indigo-400"
-            />
-            <button
-              onClick={handleJoin}
-              className="rounded-xl bg-emerald-500 px-5 font-semibold transition hover:bg-emerald-400"
-            >
-              Katıl
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <p className="rounded-lg bg-rose-500/15 px-3 py-2 text-sm text-rose-200">
-            {error}
-          </p>
-        )}
-
-        <div className="flex items-center justify-center">
-          <Link
-            href="/stats"
-            className="text-xs text-white/50 underline-offset-2 hover:text-white hover:underline"
-          >
-            📊 İstatistiklerim
-          </Link>
-        </div>
-
-        <p className="text-center text-[11px] text-white/30">
-          Bu oyun bir kişisel proje denemesidir. Catan® markasıyla bağlantılı değildir.
+    <main className="flex min-h-screen flex-col items-center bg-slate-950 px-6 py-12 text-white">
+      <header className="mb-12 text-center">
+        <h1 className="bg-gradient-to-br from-amber-200 via-rose-200 to-indigo-200 bg-clip-text text-4xl font-semibold tracking-tight text-transparent sm:text-5xl">
+          Akşam masası
+        </h1>
+        <p className="mt-3 max-w-xl text-sm text-white/60">
+          Arkadaşlarınla oynamak için bir oyun seç. Oda kur veya 6 haneli kodla
+          katıl — login yok, sadece takma ad.
         </p>
-      </div>
+      </header>
+
+      <section className="grid w-full max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {allGames.map((game) => {
+          const theme = GAME_THEME[game.id];
+          return (
+            <article
+              key={game.id}
+              className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60 p-6 transition ${
+                game.playable
+                  ? "hover:-translate-y-0.5 hover:border-white/30 hover:bg-slate-900/80 hover:shadow-2xl"
+                  : "opacity-60"
+              }`}
+            >
+              {/* gradient backdrop */}
+              <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${theme.gradient} opacity-50 transition group-hover:opacity-90`}
+              />
+              <div className="relative">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-3xl">{theme.emoji}</div>
+                    <h2 className="mt-2 text-2xl font-semibold">
+                      {game.displayName}
+                    </h2>
+                  </div>
+                  {!game.playable && (
+                    <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
+                      Yakında
+                    </span>
+                  )}
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-white/70">
+                  {game.shortDescription}
+                </p>
+                <div className="mt-4 flex items-center justify-between text-xs text-white/40">
+                  <span>
+                    {game.minPlayers}–{game.maxPlayers} oyuncu
+                  </span>
+                </div>
+                <div className="mt-6">
+                  {game.playable ? (
+                    <Link
+                      href={game.lobbyPath}
+                      className={`inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r ${theme.accent} px-4 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110`}
+                    >
+                      Oyna →
+                    </Link>
+                  ) : (
+                    <button
+                      disabled
+                      className="inline-flex w-full cursor-not-allowed items-center justify-center rounded-xl bg-slate-800/50 px-4 py-2.5 text-sm font-semibold text-white/40"
+                    >
+                      Yakında açılıyor
+                    </button>
+                  )}
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <nav className="mt-10 flex gap-4 text-xs text-white/40">
+        <Link
+          href="/stats"
+          className="rounded-lg border border-white/10 bg-slate-900/40 px-3 py-1.5 transition hover:bg-slate-900/80 hover:text-white/80"
+        >
+          📊 İstatistikler
+        </Link>
+      </nav>
+
+      <footer className="mt-16 text-center text-[11px] text-white/30">
+        <p>
+          Sunny Harbor / Splendor / Ticket to Ride · multiplayer · arkadaş
+          çevresi için
+        </p>
+      </footer>
     </main>
   );
 }

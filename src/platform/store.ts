@@ -1,8 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import type { GameState } from "@/game/types";
-import type { ServerEvent } from "@/game/protocol";
 
 type ConnState = "idle" | "connecting" | "open" | "closed" | "error";
 
@@ -14,56 +12,71 @@ export type ChatMessage = {
   ts: number;
 };
 
-type Store = {
+/**
+ * Generic per-game store. Each game module instantiates its own copy
+ * via `createGameStore<MyState>()` so the platform doesn't need to know
+ * the shape of every game's state up front.
+ */
+export type GameStore<S, E> = {
   selfId: string | null;
   nickname: string;
   reconnectId: string | null;
   conn: ConnState;
-  state: GameState | null;
-  recentEvents: ServerEvent[];
+  state: S | null;
+  recentEvents: E[];
   lastError: ServerError | null;
   chat: ChatMessage[];
-  /** True when the server admitted us as a spectator (game already in
-   *  progress and we weren't a returning player). Spectators can watch but
-   *  cannot send game actions. */
   isSpectator: boolean;
   setNickname: (n: string) => void;
   setSelfId: (id: string) => void;
   setReconnectId: (id: string | null) => void;
   setConn: (s: ConnState) => void;
-  setState: (s: GameState) => void;
-  applyEvents: (events: ServerEvent[]) => void;
+  setState: (s: S) => void;
+  applyEvents: (events: E[]) => void;
   pushError: (e: { code: string; message: string }) => void;
   clearError: () => void;
   pushChat: (m: ChatMessage) => void;
   setSpectator: (b: boolean) => void;
 };
 
-export const useGameStore = create<Store>()((set) => ({
-  selfId: null,
-  nickname: "",
-  reconnectId: null,
-  conn: "idle",
-  state: null,
-  recentEvents: [],
-  lastError: null,
-  chat: [],
-  isSpectator: false,
+export function createGameStore<S, E>() {
+  return create<GameStore<S, E>>()((set) => ({
+    selfId: null,
+    nickname: "",
+    reconnectId: null,
+    conn: "idle",
+    state: null,
+    recentEvents: [],
+    lastError: null,
+    chat: [],
+    isSpectator: false,
 
-  setNickname: (nickname) => set({ nickname }),
-  setSelfId: (selfId) => set({ selfId }),
-  setReconnectId: (reconnectId) => set({ reconnectId }),
-  setConn: (conn) => set({ conn }),
-  setState: (state) => set({ state }),
-  applyEvents: (events) =>
-    set((s) => ({ recentEvents: [...s.recentEvents, ...events].slice(-50) })),
-  pushError: (e) =>
-    set({ lastError: { ...e, ts: Date.now() } }),
-  clearError: () => set({ lastError: null }),
-  pushChat: (m) =>
-    set((s) => ({ chat: [...s.chat, m].slice(-100) })),
-  setSpectator: (b) => set({ isSpectator: b }),
-}));
+    setNickname: (nickname) => set({ nickname }),
+    setSelfId: (selfId) => set({ selfId }),
+    setReconnectId: (reconnectId) => set({ reconnectId }),
+    setConn: (conn) => set({ conn }),
+    setState: (state) => set({ state }),
+    applyEvents: (events) =>
+      set((s) => ({ recentEvents: [...s.recentEvents, ...events].slice(-50) })),
+    pushError: (e) => set({ lastError: { ...e, ts: Date.now() } }),
+    clearError: () => set({ lastError: null }),
+    pushChat: (m) =>
+      set((s) => ({ chat: [...s.chat, m].slice(-100) })),
+    setSpectator: (b) => set({ isSpectator: b }),
+  }));
+}
+
+// --- Default Sunny Harbor store (legacy: components import `useGameStore`)
+// We keep the original singleton for the existing Catan code path so the
+// refactor stays minimal. New games create their own stores via
+// `createGameStore<TheirState, TheirEvents>()`.
+
+import type { GameState } from "@/games/sunny-harbor/types";
+import type { ServerEvent } from "@/games/sunny-harbor/protocol";
+
+export const useGameStore = createGameStore<GameState, ServerEvent>();
+
+// --- localStorage helpers (shared across all games) -----------------------
 
 const NICK_KEY = "sunny-harbor:nickname";
 const RECON_KEY_PREFIX = "sunny-harbor:reconnect:";
@@ -89,9 +102,6 @@ export function saveReconnectId(roomCode: string, playerId: string) {
   window.localStorage.setItem(RECON_KEY_PREFIX + roomCode, playerId);
 }
 
-// Track the most recently entered room so the lobby can offer a one-tap
-// "rejoin" shortcut. We only persist on actual room visits — clearing
-// nickname or stats does not affect this.
 export function loadLastRoomCode(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(LAST_ROOM_KEY);

@@ -1,6 +1,6 @@
 "use client";
 
-import type { DevelopmentCard, Resource } from "@/game/types";
+import type { DevelopmentCard, Resource } from "@/games/sunny-harbor/types";
 
 // Inline SVG illustrations for resource cards. Each one is a stylized scene
 // drawn with vector primitives — no external assets, scales crisply at any

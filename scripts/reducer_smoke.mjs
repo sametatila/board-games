@@ -9,9 +9,9 @@ const root = path.resolve(here, "..");
 
 // Run an inline TS-aware script through tsx.
 const tsCode = `
-import { reduce } from "${path.join(root, "src/game/reducer.ts").replace(/\\\\/g, "/")}";
-import type { GameState } from "${path.join(root, "src/game/types.ts").replace(/\\\\/g, "/")}";
-import { hexVertexIds, hexEdgeIds } from "${path.join(root, "src/game/hex.ts").replace(/\\\\/g, "/")}";
+import { reduce } from "${path.join(root, "src/games/sunny-harbor/reducer.ts").replace(/\\\\/g, "/")}";
+import type { GameState } from "${path.join(root, "src/games/sunny-harbor/types.ts").replace(/\\\\/g, "/")}";
+import { hexVertexIds, hexEdgeIds } from "${path.join(root, "src/games/sunny-harbor/hex.ts").replace(/\\\\/g, "/")}";
 
 function emptyResources() {
   return { wood: 0, brick: 0, wheat: 0, sheep: 0, ore: 0 };

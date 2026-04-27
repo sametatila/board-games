@@ -35,7 +35,7 @@ function applyEuler(v, [ex, ey, ez]) {
   return r;
 }
 
-// Match src/components/DiceModal.tsx
+// Match src/games/sunny-harbor/components/DiceModal.tsx
 function targetRotationFor(value) {
   switch (value) {
     case 1: return [0, 0, Math.PI / 2];

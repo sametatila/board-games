@@ -1,6 +1,6 @@
-import { generateBoard } from "../src/game/board";
-import { MAP_TEMPLATES } from "../src/game/mapTemplates";
-import type { MapTemplateId } from "../src/game/types";
+import { generateBoard } from "../src/games/sunny-harbor/board";
+import { MAP_TEMPLATES } from "../src/games/sunny-harbor/mapTemplates";
+import type { MapTemplateId } from "../src/games/sunny-harbor/types";
 
 const ids = Object.keys(MAP_TEMPLATES) as MapTemplateId[];
 let pass = 0;

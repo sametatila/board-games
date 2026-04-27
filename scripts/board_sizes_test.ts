@@ -1,4 +1,4 @@
-import { generateBoard } from "../src/game/board";
+import { generateBoard } from "../src/games/sunny-harbor/board";
 
 const sizes = [
   { players: 2, expectedHex: 19 },

@@ -1,6 +1,11 @@
 {
   "$schema": "https://www.partykit.io/schema.json",
   "name": "sunny-harbor",
-  "main": "party/index.ts",
+  "main": "party/sunny-harbor.ts",
+  "parties": {
+    "sunny_harbor": "party/sunny-harbor.ts",
+    "splendor": "party/splendor.ts",
+    "ticket_to_ride": "party/ticket-to-ride.ts"
+  },
   "compatibilityDate": "2025-01-01"
 }

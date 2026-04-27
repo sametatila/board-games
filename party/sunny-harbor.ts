@@ -3,15 +3,15 @@ import type {
   ClientMessage,
   ServerMessage,
   ServerEvent,
-} from "../src/game/protocol";
+} from "../src/games/sunny-harbor/protocol";
 import type {
   GameState,
   Player,
   PlayerColor,
   Resource,
-} from "../src/game/types";
-import { DEFAULT_SETTINGS } from "../src/game/types";
-import { reduce } from "../src/game/reducer";
+} from "../src/games/sunny-harbor/types";
+import { DEFAULT_SETTINGS } from "../src/games/sunny-harbor/types";
+import { reduce } from "../src/games/sunny-harbor/reducer";
 
 const COLOR_POOL: PlayerColor[] = [
   "red",

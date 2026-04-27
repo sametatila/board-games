@@ -52,7 +52,7 @@ function rect(rows: number[], rOffset = -Math.floor(rows.length / 2)): AxialCoor
 }
 
 function spiral(radius: number, center: AxialCoord = { q: 0, r: 0 }): AxialCoord[] {
-  // Same spiral as src/game/hex.ts spiralOf, duplicated here to avoid an import cycle.
+  // Same spiral as src/games/sunny-harbor/hex.ts spiralOf, duplicated here to avoid an import cycle.
   const HEX_DIRECTIONS = [
     { q: 1, r: 0 },
     { q: 1, r: -1 },

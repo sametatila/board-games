@@ -1,7 +1,7 @@
-import { reduce } from "../src/game/reducer";
-import type { GameState, PlayerColor } from "../src/game/types";
-import { DEFAULT_SETTINGS } from "../src/game/types";
-import { hexVertexIds, hexEdgeIds } from "../src/game/hex";
+import { reduce } from "../src/games/sunny-harbor/reducer";
+import type { GameState, PlayerColor } from "../src/games/sunny-harbor/types";
+import { DEFAULT_SETTINGS } from "../src/games/sunny-harbor/types";
+import { hexVertexIds, hexEdgeIds } from "../src/games/sunny-harbor/hex";
 
 function emptyResources() {
   return { wood: 0, brick: 0, wheat: 0, sheep: 0, ore: 0 };

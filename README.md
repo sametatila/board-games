@@ -88,19 +88,19 @@ import et. Build ayarları otomatik (Next.js detect eder).
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Client (Vercel/Next.js)                                 │
-│  src/components/Board3D.tsx     ← three.js render       │
-│  src/components/GameView.tsx    ← UI, action dispatch   │
-│  src/lib/store.ts               ← zustand state         │
-│  src/lib/useParty.ts            ← WebSocket client      │
+│  src/games/sunny-harbor/components/Board3D.tsx     ← three.js render       │
+│  src/games/sunny-harbor/components/GameView.tsx    ← UI, action dispatch   │
+│  src/platform/store.ts               ← zustand state         │
+│  src/platform/useParty.ts            ← WebSocket client      │
 └─────────────────────────────────────────────────────────┘
                        │ WSS (PartyKit protocol)
                        ▼
 ┌─────────────────────────────────────────────────────────┐
 │ Server (PartyKit/Cloudflare Durable Object per room)    │
 │  party/index.ts                 ← message handler       │
-│  src/game/reducer.ts            ← pure state reducer    │
-│  src/game/board.ts              ← board generation      │
-│  src/game/mapTemplates.ts       ← 6 map definitions     │
+│  src/games/sunny-harbor/reducer.ts            ← pure state reducer    │
+│  src/games/sunny-harbor/board.ts              ← board generation      │
+│  src/games/sunny-harbor/mapTemplates.ts       ← 6 map definitions     │
 └─────────────────────────────────────────────────────────┘
 ```
 

@@ -11,7 +11,7 @@ import {
   edgeEndpointVertices,
   vertexAdjacentVertices,
   spiralOf,
-} from "../src/game/hex";
+} from "../src/games/sunny-harbor/hex";
 
 const center = { q: 0, r: 0 };
 // Use a slightly larger board for ground-truth, but only check vertices that
