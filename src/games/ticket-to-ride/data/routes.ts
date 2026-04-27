@@ -65,8 +65,7 @@ export const ROUTES: Route[] = [
   r("santa_fe-el_paso", "santa_fe", "el_paso", 2, "gray"),
   r("santa_fe-oklahoma_city", "santa_fe", "oklahoma_city", 3, "blue"),
   r("el_paso-oklahoma_city", "el_paso", "oklahoma_city", 5, "yellow"),
-  r("el_paso-dallas-1", "el_paso", "dallas", 4, "red", "el_paso-dallas"),
-  r("el_paso-dallas-2", "el_paso", "dallas", 4, "red", "el_paso-dallas"),
+  r("el_paso-dallas", "el_paso", "dallas", 4, "red"),
   r("el_paso-houston", "el_paso", "houston", 6, "green"),
 
   // Plains
@@ -99,10 +98,12 @@ export const ROUTES: Route[] = [
   r("new_orleans-miami", "new_orleans", "miami", 6, "red"),
 
   // Midwest / East
-  r("chicago-saint_louis", "chicago", "saint_louis", 2, "green"),
+  r("chicago-saint_louis-1", "chicago", "saint_louis", 2, "green", "chicago-saint_louis"),
+  r("chicago-saint_louis-2", "chicago", "saint_louis", 2, "white", "chicago-saint_louis"),
   r("chicago-toronto", "chicago", "toronto", 4, "white"),
   r("chicago-pittsburgh-1", "chicago", "pittsburgh", 3, "black", "chicago-pittsburgh"),
   r("chicago-pittsburgh-2", "chicago", "pittsburgh", 3, "orange", "chicago-pittsburgh"),
+  r("pittsburgh-saint_louis", "pittsburgh", "saint_louis", 5, "green"),
   r("saint_louis-nashville", "saint_louis", "nashville", 2, "gray"),
   r("nashville-atlanta", "nashville", "atlanta", 1, "gray"),
   r("nashville-pittsburgh", "nashville", "pittsburgh", 4, "yellow"),
@@ -130,5 +131,4 @@ export const ROUTES: Route[] = [
   r("boston-new_york-2", "boston", "new_york", 2, "red", "boston-new_york"),
   r("new_york-washington-1", "new_york", "washington", 2, "orange", "new_york-washington"),
   r("new_york-washington-2", "new_york", "washington", 2, "black", "new_york-washington"),
-  r("washington-charleston", "washington", "charleston", 2, "gray"),
 ];

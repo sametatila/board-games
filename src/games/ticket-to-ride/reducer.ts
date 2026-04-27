@@ -65,6 +65,23 @@ function emptyHand(): Record<CardColor, number> {
   return m;
 }
 
+/**
+ * Recompute the public-facing summary counts that mirror private
+ * fields. Called after every mutation so the UI can trust the
+ * count fields even when the server redacts the underlying lists.
+ */
+function syncCounts(state: TtrState): void {
+  state.trainDeckCount = state.trainDeck.length;
+  state.discardPileCount = state.discardPile.length;
+  state.ticketDeckCount = state.ticketDeck.length;
+  for (const p of state.players) {
+    let total = 0;
+    for (const c of CARD_COLORS) total += p.hand[c];
+    p.handCount = total;
+    p.ticketCount = p.tickets.length;
+  }
+}
+
 function clone<T>(o: T): T {
   return JSON.parse(JSON.stringify(o)) as T;
 }
@@ -170,9 +187,12 @@ export function buildInitialState(roomCode: string): TtrState {
     turnOrder: [],
     currentPlayerIndex: 0,
     trainDeck: [],
+    trainDeckCount: 0,
     market: [null, null, null, null, null],
     discardPile: [],
+    discardPileCount: 0,
     ticketDeck: [],
+    ticketDeckCount: 0,
     claimedRoutes: {},
     finalRoundTriggered: false,
     finalRoundStartedAt: null,
@@ -196,7 +216,9 @@ export function makeTtrPlayer(
     isHost,
     connected: true,
     hand: emptyHand(),
+    handCount: 0,
     tickets: [],
+    ticketCount: 0,
     pendingTickets: null,
     trainsLeft: TRAINS_PER_PLAYER,
     claimedRoutes: [],
@@ -207,6 +229,16 @@ export function makeTtrPlayer(
 // --- Reducer ---------------------------------------------------------------
 
 export function reduce(prev: TtrState, action: TtrAction): ReducerResult {
+  const result = reduceInner(prev, action);
+  // After every successful mutation, refresh public-facing counts so
+  // `handCount`, `ticketCount`, `trainDeckCount`, etc. stay in sync
+  // with the underlying private fields. The server uses these counts
+  // when redacting state for opponents.
+  if (result.ok) syncCounts(result.state);
+  return result;
+}
+
+function reduceInner(prev: TtrState, action: TtrAction): ReducerResult {
   const state = clone(prev);
   // RNG for any actions that need to draw from the deck. Seed mixes
   // the room state so action handlers stay deterministic-per-state but

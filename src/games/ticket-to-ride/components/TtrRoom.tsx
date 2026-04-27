@@ -132,11 +132,11 @@ export function TtrRoom({
         ))}
         <DeckButton
           label="Kapalı"
-          count={state.trainDeck.length}
+          count={state.trainDeckCount}
           clickable={
             isMyTurn &&
             (state.subPhase === "main" || state.subPhase === "drawing_train") &&
-            state.trainDeck.length > 0
+            state.trainDeckCount > 0
           }
           onClick={() =>
             me &&
@@ -152,7 +152,7 @@ export function TtrRoom({
             disabled={
               !isMyTurn ||
               state.subPhase !== "main" ||
-              state.ticketDeck.length === 0
+              state.ticketDeckCount === 0
             }
             onClick={() =>
               me && sendAction({ type: "TTR/DRAW_TICKETS", playerId: me.id })
@@ -161,7 +161,7 @@ export function TtrRoom({
           >
             Görev kartı çek
             <div className="mt-1 text-[10px] text-amber-300/60">
-              ({state.ticketDeck.length} kalan)
+              ({state.ticketDeckCount} kalan)
             </div>
           </button>
         </div>
@@ -452,7 +452,10 @@ function PlayerPanel({
   isActive: boolean;
   isMe: boolean;
 }) {
-  const handTotal = Object.values(player.hand).reduce((a, b) => a + b, 0);
+  // Use the public `handCount` / `ticketCount` mirrors so the UI shows
+  // accurate sizes for opponents (whose `hand` and `tickets` arrays are
+  // redacted by the server).
+  const handTotal = player.handCount;
   return (
     <div
       className={`rounded-xl border p-2 transition ${
@@ -480,7 +483,7 @@ function PlayerPanel({
       <div className="mt-1 grid grid-cols-3 gap-1 text-[10px] text-white/60">
         <div>🚃 {player.trainsLeft}</div>
         <div>🃏 {handTotal}</div>
-        <div>🎫 {player.tickets.length}</div>
+        <div>🎫 {player.ticketCount}</div>
       </div>
     </div>
   );

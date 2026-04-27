@@ -198,14 +198,17 @@ function finishTurn(state: SplendorState): void {
 
 function checkEndAndAdvance(state: SplendorState): void {
   // Trigger last round if any player has reached the prestige goal.
+  // Per the official rules, the player who first reaches the target
+  // finishes their current turn, then play continues until everyone
+  // has played the same number of turns (i.e. play returns to that
+  // same player). We record the trigger player's seat so we can stop
+  // exactly when sıra ona geri gelir — without giving them a free
+  // extra turn.
   const target = state.settings.prestigeToWin ?? PRESTIGE_TO_WIN;
   if (!state.lastRoundTriggered) {
     if (state.players.some((p) => p.prestige >= target)) {
       state.lastRoundTriggered = true;
-      // The player who FIRST reached target may keep playing this turn;
-      // round completes once we're back at the index that started the
-      // round (the original first player, currentPlayerIndex 0).
-      state.lastRoundStartedAt = 0;
+      state.lastRoundStartedAt = state.currentPlayerIndex;
     }
   }
 
@@ -214,8 +217,10 @@ function checkEndAndAdvance(state: SplendorState): void {
   state.currentPlayerIndex = next;
   state.subPhase = "main";
 
-  // End-game check after rotation.
-  if (state.lastRoundTriggered && next === (state.lastRoundStartedAt ?? 0)) {
+  // End-game check after rotation: the trigger player's seat coming up
+  // again means everyone got an equal number of turns and the round
+  // is complete.
+  if (state.lastRoundTriggered && next === (state.lastRoundStartedAt ?? -1)) {
     finalizeGame(state);
   }
 }
@@ -398,6 +403,10 @@ export function reduce(
 
       const gems = action.gems;
       // Validate: all distinct, no gold, all available in bank.
+      // Per the official 2014 Asmodee rulebook the player picks UP TO
+      // 3 different gem colours. The action requires at least 1; the
+      // upper bound shrinks to whatever distinct colours the bank
+      // still has (so if only 2 colours are non-empty, you take 2).
       const distinct = new Set(gems);
       if (distinct.size !== gems.length) return fail("must_be_distinct");
       if (gems.length === 0 || gems.length > 3) return fail("invalid_count");
@@ -405,13 +414,6 @@ export function reduce(
         if (!GEMS.includes(g)) return fail("invalid_gem");
         if (state.tokens[g] <= 0) return fail("token_unavailable");
       }
-      // Resmi kural: bankada en az 3 farklı renk mevcutsa 3 ALINMAK
-      // ZORUNDA. 2 farklı renk varsa 2; 1 varsa 1. Daha azını seçmek
-      // yasak — bu yüzden talep edilen sayı, mevcut farklı renk sayısı
-      // ile (max 3) eşleşmek zorunda.
-      const distinctAvailable = GEMS.filter((g) => state.tokens[g] > 0).length;
-      const required = Math.min(3, distinctAvailable);
-      if (gems.length !== required) return fail("must_take_max_distinct");
       for (const g of gems) {
         state.tokens[g] -= 1;
         cp.tokens[g] += 1;

@@ -59,6 +59,49 @@ function broadcast(party: Party.Room, msg: ServerMessage) {
   party.broadcast(JSON.stringify(msg));
 }
 
+/**
+ * Per-recipient state redaction. The full SplendorState is the
+ * authoritative game record on the server, but we must not leak each
+ * player's reserved cards to opponents. We blank them out (id = "?",
+ * neutral cost) for everyone except their owner.
+ *
+ * The rest of the state (tokens, market, decks, nobles, log) is
+ * public information per the official rules.
+ */
+function redactedStateFor(state: SplendorState, viewerId: string): SplendorState {
+  return {
+    ...state,
+    players: state.players.map((p) => {
+      if (p.id === viewerId) return p;
+      // Keep the count visible (UI shows "3 reserved cards" for others)
+      // but replace each card with an opaque placeholder so face is hidden.
+      return {
+        ...p,
+        reserved: p.reserved.map((_c, i) => ({
+          id: `redacted-${p.id}-${i}`,
+          tier: 1 as const,
+          cost: { white: 0, blue: 0, green: 0, red: 0, black: 0 },
+          bonus: "white" as const,
+          prestige: 0,
+        })),
+      };
+    }),
+  };
+}
+
+/**
+ * Broadcast a fresh snapshot to every connected client, redacting
+ * per-recipient. Replaces direct `party.broadcast({t:"snapshot", ...})`
+ * calls so reserved cards stay private.
+ */
+function broadcastSnapshot(party: Party.Room, conns: Map<string, string>, state: SplendorState) {
+  for (const c of party.getConnections()) {
+    const playerId = conns.get(c.id) ?? "";
+    const redacted = redactedStateFor(state, playerId);
+    send(c, { t: "snapshot", state: redacted, selfId: "" });
+  }
+}
+
 function broadcastEvents(party: Party.Room, events: ServerEvent[]) {
   if (events.length === 0) return;
   const now = Date.now();
@@ -86,7 +129,13 @@ export default class SplendorRoom implements Party.Server {
   }
 
   onConnect(conn: Party.Connection) {
-    send(conn, { t: "snapshot", state: this.state, selfId: conn.id });
+    // We don't know which player slot this connection belongs to until
+    // hello arrives, so send a fully-redacted snapshot (anonymous viewer).
+    send(conn, {
+      t: "snapshot",
+      state: redactedStateFor(this.state, ""),
+      selfId: conn.id,
+    });
   }
 
   async onMessage(raw: string, sender: Party.Connection) {
@@ -121,7 +170,11 @@ export default class SplendorRoom implements Party.Server {
               code: "full",
               message: "Oda dolu (4 oyuncu).",
             });
-            send(sender, { t: "snapshot", state: this.state, selfId: "" });
+            send(sender, {
+              t: "snapshot",
+              state: redactedStateFor(this.state, ""),
+              selfId: "",
+            });
             return;
           }
           if (this.state.phase !== "lobby") {
@@ -130,7 +183,11 @@ export default class SplendorRoom implements Party.Server {
               code: "spectator",
               message: "Oyun başlamış, izleyici olarak bağlandın.",
             });
-            send(sender, { t: "snapshot", state: this.state, selfId: "" });
+            send(sender, {
+              t: "snapshot",
+              state: redactedStateFor(this.state, ""),
+              selfId: "",
+            });
             return;
           }
           const used = new Set<SplendorPlayerColor>(
@@ -148,7 +205,11 @@ export default class SplendorRoom implements Party.Server {
         }
 
         this.conns.set(sender.id, player.id);
-        send(sender, { t: "snapshot", state: this.state, selfId: player.id });
+        send(sender, {
+          t: "snapshot",
+          state: redactedStateFor(this.state, player.id),
+          selfId: player.id,
+        });
         break;
       }
 
@@ -284,7 +345,7 @@ export default class SplendorRoom implements Party.Server {
 
     if (events.length > 0) {
       broadcastEvents(this.room, events);
-      broadcast(this.room, { t: "snapshot", state: this.state, selfId: "" });
+      broadcastSnapshot(this.room, this.conns, this.state);
       await this.persist();
     }
   }
@@ -294,7 +355,7 @@ export default class SplendorRoom implements Party.Server {
     this.handleDisconnect(conn, events);
     if (events.length > 0) {
       broadcastEvents(this.room, events);
-      broadcast(this.room, { t: "snapshot", state: this.state, selfId: "" });
+      broadcastSnapshot(this.room, this.conns, this.state);
     }
   }
 

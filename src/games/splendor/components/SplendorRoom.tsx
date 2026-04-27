@@ -124,23 +124,21 @@ export function SplendorRoom({
       {/* Action bar (only for active player on main phase) */}
       {isMyTurn && state.subPhase === "main" && (() => {
         const distinctAvailable = GEMS.filter((g) => state.tokens[g] > 0).length;
-        const required = Math.min(3, distinctAvailable);
-        const canCommit3 = pickedGems.length === required && required > 0;
+        const maxPickable = Math.min(3, distinctAvailable);
+        const canCommit = pickedGems.length >= 1 && pickedGems.length <= maxPickable;
         return (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-950/30 p-3 text-sm">
           <span className="text-white/70">Senin sıran —</span>
           <button
             onClick={commitTake3}
-            disabled={!canCommit3}
+            disabled={!canCommit}
             className="rounded-lg bg-indigo-500 px-3 py-1.5 font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-indigo-400"
           >
-            {required === 0
+            {maxPickable === 0
               ? "Bankada renk yok"
               : pickedGems.length === 0
-              ? `${required} farklı renk seç (yukarıdan)`
-              : pickedGems.length < required
-              ? `${pickedGems.length}/${required} seçildi`
-              : `${required} farklı al (${pickedGems.join(", ")})`}
+              ? `Farklı renk seç (en fazla ${maxPickable})`
+              : `${pickedGems.length} farklı al (${pickedGems.join(", ")})`}
           </button>
           <span className="text-white/40">veya</span>
           <span className="text-white/60">aynı renkten 2 al:</span>

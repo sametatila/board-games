@@ -84,12 +84,20 @@ export type TtrPlayer = {
   isHost: boolean;
   connected: boolean;
 
-  /** Train cards in hand — secret to other players. */
+  /** Train cards in hand — secret to other players. The server redacts
+   *  this to an all-zero map for opponents and exposes `handCount`
+   *  alongside it as a public summary. */
   hand: Record<CardColor, number>;
-  /** Tickets in hand — secret. */
+  /** Public total card count, mirrors `sum(hand)`. Always trustworthy
+   *  even when `hand` itself is redacted for the recipient. */
+  handCount: number;
+  /** Tickets in hand — secret. Redacted to [] for opponents; only the
+   *  count survives (`ticketCount`). */
   tickets: Ticket[];
-  /** When in `pending_initial_tickets` or `pending_extra_tickets`,
-   *  the offered set the player must commit on. */
+  /** Public count, mirrors `tickets.length`. */
+  ticketCount: number;
+  /** When in `initial_tickets` or `picking_tickets`, the offered set
+   *  the player must commit on. Secret to others. */
   pendingTickets: Ticket[] | null;
   trainsLeft: number;
   /** Routes the player has claimed (just the ids; lookup map is in state). */
@@ -132,14 +140,26 @@ export type TtrState = {
   turnOrder: string[];
   currentPlayerIndex: number;
 
-  /** Face-down train deck (top = end of array → .pop() draws). */
+  /** Face-down train deck (top = end of array → .pop() draws). The
+   *  server redacts the contents to [] for clients but keeps
+   *  `trainDeckCount` so the UI shows how many cards remain. */
   trainDeck: CardColor[];
+  /** Public count of `trainDeck`, always present even when deck is
+   *  redacted. */
+  trainDeckCount: number;
   /** Five face-up cards (null = empty if both deck and discard are dry). */
   market: (CardColor | null)[];
-  /** Discard pile, shuffled back when the deck runs out. */
+  /** Discard pile, shuffled back when the deck runs out. Public per
+   *  the rules (the top card is visible) — but we still expose just
+   *  the size to the client to avoid leaking the full sequence. */
   discardPile: CardColor[];
-  /** Face-down ticket deck (used cards go to the bottom). */
+  /** Public count of `discardPile`. */
+  discardPileCount: number;
+  /** Face-down ticket deck (used cards go to the bottom). Redacted to
+   *  [] for clients; `ticketDeckCount` is the public surface. */
   ticketDeck: Ticket[];
+  /** Public count of `ticketDeck`. */
+  ticketDeckCount: number;
 
   /** routeId → ownerPlayerId. */
   claimedRoutes: Record<RouteId, string>;

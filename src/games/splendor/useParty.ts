@@ -12,7 +12,6 @@ const reasonLabels: Record<string, string> = {
   color_taken: "Bu renk başka bir oyuncuda.",
   must_be_distinct: "Farklı renkler seçmelisin (aynısından 2 için ayrı buton var).",
   invalid_count: "1, 2 veya 3 farklı renk seçmen gerek.",
-  must_take_max_distinct: "Bankada mevcut tüm farklı rengi (en fazla 3) almak zorundasın.",
   token_unavailable: "Seçtiğin renklerden bankada yok.",
   need_4_in_bank: "Aynı renkten 2 almak için bankada en az 4 olmalı.",
   reserve_full: "Rezerv limiti 3 — daha fazla rezerv yapamazsın.",

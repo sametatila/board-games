@@ -1,8 +1,10 @@
 import type { Card, Gem } from "../types";
 
 /**
- * Tier 2 development cards (30 cards). 6 cards per gem bonus colour with
- * prestige in the 1–3 range and costs of 5–8 total gems.
+ * Tier 2 development cards (30 cards) — resmi dağılım: her renk için 6
+ * kart, prestij 1–3, kart maliyetleri 5–8. Tek-renk-5 kartı her renkte
+ * 2 prestij verir; çift-renk dağılım kartları 1 prestij; tek-renk-6
+ * kartı 3 prestij.
  */
 
 const c = (
