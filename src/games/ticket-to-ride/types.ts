@@ -179,6 +179,8 @@ export type TtrState = {
     routeScore: number;
     ticketBonus: number; // sum of completed ticket values
     ticketPenalty: number; // sum of unfinished ticket values
+    ticketsCompleted: number;
+    ticketsTotal: number;
     longestPathBonus: number; // 0 or 10
     longestPathLength: number;
     total: number;

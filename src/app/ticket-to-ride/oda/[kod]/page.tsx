@@ -131,8 +131,11 @@ export default function TtrRoomPage() {
   }, [state?.log.length]);
 
   // Persist finished game stats once per (room, winnerId, playerset).
+  // Drawn games (winnerId === null) are not recorded — there's no
+  // "win/loss" verdict to attach to the record.
   useEffect(() => {
     if (!state || state.phase !== "finished" || !me) return;
+    if (!state.winnerId) return;
     const myBreakdown = state.finalScores?.find((b) => b.playerId === me.id);
     const won = state.winnerId === me.id;
     recordGame({
@@ -148,12 +151,8 @@ export default function TtrRoomPage() {
       nickname: me.nickname,
       metadata: {
         trainsRemaining: me.trainsLeft,
-        ticketsCompleted: me.tickets.filter((t) => {
-          // Use the breakdown's bonus to infer; ticketBonus = sum of completed values
-          // which we cannot trivially split per ticket here, so we conservatively
-          // record the count of all tickets the player held.
-          return true;
-        }).length,
+        ticketsCompleted: myBreakdown?.ticketsCompleted ?? 0,
+        ticketsTotal: myBreakdown?.ticketsTotal ?? me.tickets.length,
         longestPathLength: myBreakdown?.longestPathLength ?? 0,
         gotLongestPath: (myBreakdown?.longestPathBonus ?? 0) > 0,
       },
@@ -442,9 +441,12 @@ function TtrFinished({
                 </div>
                 <div className="mt-1 grid grid-cols-2 gap-1 text-xs text-white/50">
                   <div>Yollar: {b.routeScore}p</div>
+                  <div>
+                    Görev tamamlandı: {b.ticketsCompleted}/{b.ticketsTotal}
+                  </div>
                   <div>+ Görev: {b.ticketBonus}p</div>
                   <div>− Görev: {b.ticketPenalty}p</div>
-                  <div>
+                  <div className="col-span-2">
                     En uzun rota ({b.longestPathLength}):{" "}
                     {b.longestPathBonus > 0 ? "+10p" : "—"}
                   </div>

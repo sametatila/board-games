@@ -140,8 +140,11 @@ export default function SplendorRoomPage() {
   const sendAction = (a: SplendorAction) => send({ t: "action", action: a });
 
   // Persist finished game stats once per (room, winnerId, playerset).
+  // Drawn games (winnerId === null) are not recorded — there's no
+  // "win/loss" verdict to attach to the record.
   useEffect(() => {
     if (!state || state.phase !== "finished" || !me) return;
+    if (!state.winnerId) return;
     const won = state.winnerId === me.id;
     recordGame({
       gameKey: `${state.roomCode}:${state.winnerId ?? "draw"}:${state.players

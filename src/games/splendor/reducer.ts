@@ -124,8 +124,7 @@ function isAffordable(
   // makes up the rest, capped by how many the player has.
   const spend: Record<Gem, number> = emptyGemMap();
   let goldSpend = 0;
-  const goldHave = player.tokens.gold;
-  let goldRemaining = goldHave;
+  let goldRemaining = player.tokens.gold;
 
   for (const g of GEMS) {
     const need = Math.max(0, card.cost[g] - player.bonus[g]);

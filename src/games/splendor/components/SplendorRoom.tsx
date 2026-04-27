@@ -33,6 +33,25 @@ const GEM_LABEL: Record<Gem, string> = {
   red: "Yakut",
   black: "Oniks",
 };
+/** Subtle radial highlight gives a 3D "polished gem" look without
+ *  needing an SVG asset. */
+const GEM_GRADIENT: Record<Gem, string> = {
+  white: "radial-gradient(circle at 30% 30%, #ffffff 0%, #e2e8f0 60%, #94a3b8 100%)",
+  blue: "radial-gradient(circle at 30% 30%, #93c5fd 0%, #3b82f6 55%, #1e3a8a 100%)",
+  green: "radial-gradient(circle at 30% 30%, #86efac 0%, #22c55e 55%, #14532d 100%)",
+  red: "radial-gradient(circle at 30% 30%, #fca5a5 0%, #ef4444 55%, #7f1d1d 100%)",
+  black: "radial-gradient(circle at 30% 30%, #475569 0%, #1f2937 55%, #0b1120 100%)",
+};
+const GOLD_GRADIENT =
+  "radial-gradient(circle at 30% 30%, #fef3c7 0%, #facc15 55%, #92400e 100%)";
+/** Symbol used inside chip / card to identify gem type at a glance. */
+const GEM_GLYPH: Record<Gem, string> = {
+  white: "◆",
+  blue: "♦",
+  green: "▲",
+  red: "■",
+  black: "●",
+};
 
 export function SplendorRoom({
   state,
@@ -239,29 +258,35 @@ function TokenChip({
   picked?: boolean;
   onClick?: () => void;
 }) {
-  const bg = color === "gold" ? "#facc15" : GEM_COLOR[color];
-  const fg = color === "gold" ? "#1f2937" : GEM_TEXT[color as Gem];
+  const isGold = color === "gold";
+  const fg = isGold ? "#1f2937" : GEM_TEXT[color as Gem];
+  const gradient = isGold ? GOLD_GRADIENT : GEM_GRADIENT[color as Gem];
   return (
     <button
       onClick={onClick}
       disabled={!clickable || count <= 0}
-      className={`flex h-10 w-10 items-center justify-center rounded-full border-2 text-xs font-bold transition ${
+      className={`relative flex h-11 w-11 items-center justify-center rounded-full border-2 text-sm font-bold transition ${
         picked ? "ring-2 ring-amber-300 ring-offset-2 ring-offset-slate-950" : ""
-      } ${clickable && count > 0 ? "hover:scale-110" : "opacity-60"} ${
+      } ${clickable && count > 0 ? "hover:scale-110 active:scale-95" : "opacity-60"} ${
         !clickable || count <= 0 ? "cursor-default" : "cursor-pointer"
       }`}
       style={{
-        backgroundColor: bg,
+        background: gradient,
         color: fg,
-        borderColor: color === "gold" ? "#a16207" : "rgba(0,0,0,0.3)",
+        borderColor: isGold ? "#a16207" : "rgba(0,0,0,0.45)",
+        boxShadow: count > 0 ? "0 2px 6px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.4)" : "none",
+        textShadow: isGold ? "none" : "0 1px 1px rgba(0,0,0,0.3)",
       }}
       title={
-        color === "gold"
+        isGold
           ? "Altın (joker) — sadece rezerv ile kazanılır"
           : `${GEM_LABEL[color as Gem]} (bankada ${count})`
       }
     >
-      {count}
+      <span className="absolute inset-0 flex items-center justify-center text-[10px] opacity-30">
+        {isGold ? "★" : GEM_GLYPH[color as Gem]}
+      </span>
+      <span className="relative">{count}</span>
     </button>
   );
 }
@@ -277,17 +302,26 @@ function DeckBack({
   clickable: boolean;
   onClick: () => void;
 }) {
-  const tierColor = tier === 3 ? "#7e22ce" : tier === 2 ? "#0369a1" : "#15803d";
+  const tierGradient =
+    tier === 3
+      ? "linear-gradient(135deg, #7e22ce 0%, #4c1d95 100%)"
+      : tier === 2
+      ? "linear-gradient(135deg, #0369a1 0%, #0c4a6e 100%)"
+      : "linear-gradient(135deg, #15803d 0%, #14532d 100%)";
   return (
     <button
       onClick={onClick}
       disabled={!clickable || count === 0}
-      className="flex h-32 w-24 flex-col items-center justify-center rounded-xl border-2 border-white/20 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:border-amber-300"
-      style={{ backgroundColor: tierColor }}
+      className="flex h-36 w-24 flex-col items-center justify-center rounded-xl border-2 border-white/20 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:border-amber-300 hover:scale-[1.03]"
+      style={{
+        background: tierGradient,
+        boxShadow:
+          "0 4px 8px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.2)",
+      }}
       title={`Tier ${tier} desteği (${count} kart). Tıkla = kapalı rezerv.`}
     >
-      <div className="text-2xl">★{tier}</div>
-      <div className="text-[10px] text-white/70">{count} kart</div>
+      <div className="text-3xl drop-shadow">★{tier}</div>
+      <div className="mt-1 text-[10px] text-white/70">{count} kart</div>
     </button>
   );
 }
@@ -309,43 +343,58 @@ function DevCard({
 }) {
   if (!card) {
     return (
-      <div className="flex h-32 items-center justify-center rounded-xl border-2 border-dashed border-white/10 text-xs text-white/30">
+      <div className="flex h-36 items-center justify-center rounded-xl border-2 border-dashed border-white/10 text-xs text-white/30">
         boş
       </div>
     );
   }
+  const fg = GEM_TEXT[card.bonus];
+  // Top half of the card uses a gradient that fades to a lighter tint of
+  // the bonus colour so the prestige and bonus markers stay legible.
   return (
     <div
-      className="relative flex h-32 flex-col rounded-xl border-2 border-white/20 p-2"
-      style={{ backgroundColor: GEM_COLOR[card.bonus], color: GEM_TEXT[card.bonus] }}
+      className={`group relative flex h-36 flex-col overflow-hidden rounded-xl border-2 border-white/20 p-2 transition ${
+        isMyTurn && canAfford ? "hover:-translate-y-0.5 hover:shadow-xl" : ""
+      }`}
+      style={{
+        background: GEM_GRADIENT[card.bonus],
+        color: fg,
+        boxShadow:
+          "0 4px 8px rgba(0,0,0,0.35), inset 0 1px 1px rgba(255,255,255,0.25)",
+      }}
     >
-      <div className="flex items-start justify-between text-xs">
-        <div className="font-bold">
+      <div className="flex items-start justify-between">
+        <div className="text-base font-bold leading-none drop-shadow">
           {card.prestige > 0 ? `${card.prestige}★` : ""}
         </div>
         <div
-          className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold shadow"
           style={{
-            backgroundColor: GEM_TEXT[card.bonus],
+            backgroundColor: fg,
             color: GEM_COLOR[card.bonus],
           }}
+          title={`+1 ${GEM_LABEL[card.bonus]} kalıcı bonusu`}
         >
-          +1
+          {GEM_GLYPH[card.bonus]}
         </div>
       </div>
-      <div className="flex flex-1 flex-col justify-end gap-0.5">
+      <div className="flex flex-1 flex-col items-start justify-end gap-1">
         {GEMS.map((g) => {
           const c = card.cost[g];
           if (c === 0) return null;
           return (
-            <div key={g} className="flex items-center gap-1 text-[11px]">
-              <span
-                className="flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold"
-                style={{ backgroundColor: GEM_COLOR[g], color: GEM_TEXT[g] }}
-              >
-                {c}
-              </span>
-            </div>
+            <span
+              key={g}
+              className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+              style={{
+                background: GEM_GRADIENT[g],
+                color: GEM_TEXT[g],
+                boxShadow: "0 1px 2px rgba(0,0,0,0.4)",
+              }}
+              title={`${c} ${GEM_LABEL[g]} gerekli`}
+            >
+              {c}
+            </span>
           );
         })}
       </div>
@@ -354,14 +403,14 @@ function DevCard({
           <button
             onClick={onPurchase}
             disabled={!canAfford}
-            className="flex-1 rounded bg-emerald-600 px-1 py-0.5 text-[10px] font-bold text-white disabled:opacity-30 hover:bg-emerald-500"
+            className="flex-1 rounded bg-emerald-600 px-1 py-0.5 text-[10px] font-bold text-white shadow disabled:opacity-30 hover:bg-emerald-500"
           >
             Al
           </button>
           <button
             onClick={onReserve}
             disabled={!canReserveHere}
-            className="flex-1 rounded bg-amber-600 px-1 py-0.5 text-[10px] font-bold text-white disabled:opacity-30 hover:bg-amber-500"
+            className="flex-1 rounded bg-amber-600 px-1 py-0.5 text-[10px] font-bold text-white shadow disabled:opacity-30 hover:bg-amber-500"
           >
             Rezerv
           </button>
@@ -373,8 +422,17 @@ function DevCard({
 
 function NobleCard({ noble }: { noble: { id: string; requirement: Record<Gem, number>; prestige: 3 } }) {
   return (
-    <div className="flex flex-col items-center rounded-xl border border-amber-300/40 bg-amber-100/10 px-3 py-2">
-      <div className="text-xs font-bold text-amber-200">3★</div>
+    <div
+      className="flex flex-col items-center rounded-xl border-2 border-amber-300/50 px-3 py-2 shadow-lg"
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(254,243,199,0.15) 0%, rgba(245,158,11,0.18) 100%)",
+        boxShadow:
+          "0 2px 8px rgba(245,158,11,0.25), inset 0 1px 1px rgba(255,255,255,0.15)",
+      }}
+      title="Soylu — gereksinimleri karşılayan oyuncuyu otomatik ziyaret eder, +3 prestij"
+    >
+      <div className="text-sm font-bold text-amber-200">⚜ 3★</div>
       <div className="mt-1 flex gap-1">
         {GEMS.map((g) => {
           const n = noble.requirement[g];
@@ -382,8 +440,12 @@ function NobleCard({ noble }: { noble: { id: string; requirement: Record<Gem, nu
           return (
             <span
               key={g}
-              className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
-              style={{ backgroundColor: GEM_COLOR[g], color: GEM_TEXT[g] }}
+              className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold"
+              style={{
+                background: GEM_GRADIENT[g],
+                color: GEM_TEXT[g],
+                boxShadow: "0 1px 2px rgba(0,0,0,0.4)",
+              }}
             >
               {n}
             </span>

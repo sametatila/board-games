@@ -621,9 +621,11 @@ function finalizeGame(state: TtrState): void {
       .filter(Boolean);
     let ticketBonus = 0;
     let ticketPenalty = 0;
+    let ticketsCompleted = 0;
     for (const t of p.tickets) {
       if (citiesConnected(owned, t.fromCity, t.toCity)) {
         ticketBonus += t.value;
+        ticketsCompleted += 1;
       } else {
         ticketPenalty += t.value;
       }
@@ -634,6 +636,8 @@ function finalizeGame(state: TtrState): void {
       routeScore: p.routeScore,
       ticketBonus,
       ticketPenalty,
+      ticketsCompleted,
+      ticketsTotal: p.tickets.length,
       longestPathBonus: 0,
       longestPathLength: lp,
       total: p.routeScore + ticketBonus - ticketPenalty,
@@ -654,20 +658,13 @@ function finalizeGame(state: TtrState): void {
   state.finalScores = breakdowns;
 
   // Tiebreak: highest total → most tickets completed → longest path
-  // ownership. If still tied, no winnerId named.
+  // holder. If still tied, no winnerId named.
   let best = -Infinity;
   for (const b of breakdowns) best = Math.max(best, b.total);
   let winners = breakdowns.filter((b) => b.total === best);
   if (winners.length > 1) {
-    const ticketCounts = winners.map((w) => {
-      const p = state.players.find((pp) => pp.id === w.playerId)!;
-      const owned = p.claimedRoutes
-        .map((rid) => ROUTES.find((r) => r.id === rid)!)
-        .filter(Boolean);
-      return p.tickets.filter((t) => citiesConnected(owned, t.fromCity, t.toCity)).length;
-    });
-    const maxTickets = Math.max(...ticketCounts);
-    winners = winners.filter((_, i) => ticketCounts[i] === maxTickets);
+    const maxTickets = Math.max(...winners.map((w) => w.ticketsCompleted));
+    winners = winners.filter((w) => w.ticketsCompleted === maxTickets);
   }
   if (winners.length > 1) {
     winners = winners.filter((w) => w.longestPathBonus > 0);

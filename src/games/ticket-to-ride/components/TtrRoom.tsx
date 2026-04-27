@@ -89,6 +89,12 @@ export function TtrRoom({
           title="İlk görev kartların — en az 2 tut"
         />
       )}
+      {state.subPhase === "initial_tickets" && me && !me.pendingTickets && (
+        <div className="rounded-2xl border border-amber-400/30 bg-amber-950/20 p-4 text-sm text-amber-200">
+          Görevlerini tuttun. Diğer oyuncular henüz seçimini yapıyor —
+          biraz bekle…
+        </div>
+      )}
 
       {/* Mid-game ticket pick */}
       {state.subPhase === "picking_tickets" && isMyTurn && me?.pendingTickets && (
@@ -287,8 +293,23 @@ function MapSvg({
     <svg
       viewBox="0 0 100 80"
       className="w-full"
-      style={{ minHeight: 320, maxHeight: 540 }}
+      style={{ minHeight: 360, maxHeight: 600 }}
     >
+      <defs>
+        {/* Soft "ocean" backdrop so the map reads as a continent rather
+            than a flat slate panel. */}
+        <radialGradient id="ttr-backdrop" cx="50%" cy="48%" r="65%">
+          <stop offset="0%" stopColor="#1e293b" />
+          <stop offset="100%" stopColor="#020617" />
+        </radialGradient>
+        {/* Soft drop shadow for owned routes. */}
+        <filter id="ttr-route-shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="0.15" stdDeviation="0.18" floodOpacity="0.6" />
+        </filter>
+      </defs>
+
+      <rect x="0" y="0" width="100" height="80" fill="url(#ttr-backdrop)" />
+
       {/* Routes */}
       {ROUTES.map((r) => {
         const from = CITIES.find((c) => c.id === r.fromCity)!;
@@ -302,13 +323,12 @@ function MapSvg({
           state.subPhase === "main" &&
           me &&
           canClaimRoute(state, me, r.id);
-        const stroke = ownerPlayer
-          ? TRAIN_PLAYER_HEX[ownerPlayer.color]
-          : ROUTE_HEX[r.color] ?? "#475569";
-        // For double routes draw two parallel lines (offset perpendicular).
-        // Calculate offset based on parallel position: for routes with
-        // `parallelGroupId`, the route position within that group determines
-        // which parallel line (above/below midpoint).
+        const baseStroke = ROUTE_HEX[r.color] ?? "#475569";
+        const ownerStroke = ownerPlayer ? TRAIN_PLAYER_HEX[ownerPlayer.color] : null;
+
+        // Parallel offset: for routes with parallelGroupId, push them
+        // perpendicular to their connecting line so the two siblings
+        // don't overlap.
         let dx = 0;
         let dy = 0;
         if (r.parallelGroupId) {
@@ -316,68 +336,150 @@ function MapSvg({
           const idx = sibs.findIndex((o) => o.id === r.id);
           const total = sibs.length;
           const slot = idx - (total - 1) / 2;
-          // perpendicular vector
           const angle = Math.atan2(to.y - from.y, to.x - from.x);
           const px = -Math.sin(angle);
           const py = Math.cos(angle);
           dx = px * slot * 1.0;
           dy = py * slot * 1.0;
         }
+
+        const x1 = from.x + dx;
+        const y1 = from.y + dy;
+        const x2 = to.x + dx;
+        const y2 = to.y + dy;
+        const length = Math.hypot(x2 - x1, y2 - y1);
+
+        // Render the route as N evenly-spaced car-segments. This evokes
+        // the wagon-piece look of the printed board far better than a
+        // single solid line. Owned routes draw the full segments in the
+        // owner's colour; unclaimed ones use a dashed line with the
+        // route's colour.
+        const carCount = r.length;
+        const carPad = 0.45; // gap between cars (in viewbox units)
+        const usableLen = Math.max(length - carPad, 0.1);
+        const carLen = (usableLen - carPad * (carCount - 1)) / carCount;
+        const ux = (x2 - x1) / length;
+        const uy = (y2 - y1) / length;
+
         return (
           <g key={r.id}>
+            {/* Subtle outline behind the cars, so the path stays visible
+                when no one has claimed it. */}
             <line
-              x1={from.x + dx}
-              y1={from.y + dy}
-              x2={to.x + dx}
-              y2={to.y + dy}
-              stroke={stroke}
-              strokeWidth={ownerPlayer ? 1.3 : 0.9}
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke={baseStroke}
+              strokeWidth={1.6}
               strokeLinecap="round"
-              opacity={ownerPlayer ? 1 : 0.85}
+              opacity={ownerPlayer ? 0.18 : 0.35}
             />
-            {/* Hairline label area for hover/click */}
+            {/* The N car segments. */}
+            {Array.from({ length: carCount }).map((_, i) => {
+              const t0 = (carPad / 2 + i * (carLen + carPad)) / length;
+              const t1 = (carPad / 2 + i * (carLen + carPad) + carLen) / length;
+              const cx1 = x1 + (x2 - x1) * t0;
+              const cy1 = y1 + (y2 - y1) * t0;
+              const cx2 = x1 + (x2 - x1) * t1;
+              const cy2 = y1 + (y2 - y1) * t1;
+              const fill = ownerStroke ?? baseStroke;
+              return (
+                <line
+                  key={i}
+                  x1={cx1}
+                  y1={cy1}
+                  x2={cx2}
+                  y2={cy2}
+                  stroke={fill}
+                  strokeWidth={ownerPlayer ? 1.5 : 1.1}
+                  strokeLinecap="round"
+                  filter={ownerPlayer ? "url(#ttr-route-shadow)" : undefined}
+                  opacity={ownerPlayer ? 1 : 0.92}
+                />
+              );
+            })}
+            {/* Subtle pulsing halo when this route is claimable by the
+                viewer right now. */}
+            {claimable && (
+              <line
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="#fde68a"
+                strokeWidth={2.4}
+                strokeLinecap="round"
+                opacity={0.4}
+                style={{ pointerEvents: "none" }}
+              />
+            )}
+            {/* Wide invisible hit area for hover/click. */}
             <line
-              x1={from.x + dx}
-              y1={from.y + dy}
-              x2={to.x + dx}
-              y2={to.y + dy}
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
               stroke="transparent"
-              strokeWidth={2.5}
+              strokeWidth={3}
               style={{ cursor: claimable ? "pointer" : "default" }}
               onClick={() => onClickRoute(r.id)}
             >
               <title>
-                {r.fromCity} ↔ {r.toCity} ({r.length}, {r.color})
+                {cityNameStatic(r.fromCity)} ↔ {cityNameStatic(r.toCity)} —{" "}
+                {r.length} vagon, {r.color}
+                {ownerPlayer ? ` (${ownerPlayer.nickname})` : ""}
               </title>
             </line>
-            {/* Length pip */}
-            <text
-              x={(from.x + to.x) / 2 + dx}
-              y={(from.y + to.y) / 2 + dy + 0.4}
-              fontSize="1.2"
-              textAnchor="middle"
-              fill="#fff"
-              opacity={0.7}
-              pointerEvents="none"
+            {/* Mid-route length pip — drawn in a small bubble so it
+                doesn't fight the segments visually. */}
+            <g
+              transform={`translate(${(x1 + x2) / 2 + uy * 1.4}, ${
+                (y1 + y2) / 2 - ux * 1.4
+              })`}
+              style={{ pointerEvents: "none" }}
             >
-              {r.length}
-            </text>
+              <circle r={0.85} fill="rgba(15,23,42,0.85)" stroke="rgba(255,255,255,0.25)" strokeWidth={0.1} />
+              <text
+                fontSize="1.15"
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#fff"
+                fontWeight={700}
+              >
+                {r.length}
+              </text>
+            </g>
           </g>
         );
       })}
+
       {/* Cities */}
       {CITIES.map((c) => (
         <g key={c.id}>
-          <circle cx={c.x} cy={c.y} r={1.2} fill="#facc15" stroke="#1f2937" strokeWidth={0.2} />
+          {/* Outer halo */}
+          <circle cx={c.x} cy={c.y} r={1.55} fill="#fde68a" opacity={0.25} />
+          {/* Pin */}
+          <circle
+            cx={c.x}
+            cy={c.y}
+            r={1.05}
+            fill="#facc15"
+            stroke="#1f2937"
+            strokeWidth={0.18}
+          />
+          <circle cx={c.x} cy={c.y} r={0.4} fill="#1f2937" />
+          {/* Label */}
           <text
             x={c.x}
-            y={c.y - 1.6}
-            fontSize="1.1"
+            y={c.y - 1.85}
+            fontSize="1.25"
             textAnchor="middle"
             fill="#f8fafc"
             stroke="#0f172a"
-            strokeWidth={0.15}
+            strokeWidth={0.25}
             paintOrder="stroke"
+            fontWeight={600}
           >
             {c.name}
           </text>
@@ -385,6 +487,10 @@ function MapSvg({
       ))}
     </svg>
   );
+}
+
+function cityNameStatic(id: string): string {
+  return CITIES.find((c) => c.id === id)?.name ?? id;
 }
 
 function CardSlot({
