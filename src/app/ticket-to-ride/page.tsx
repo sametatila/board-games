@@ -64,6 +64,12 @@ export default function TtrLanding() {
         <Link href="/" className="text-xs text-white/50 hover:text-white">
           ← Tüm oyunlar
         </Link>
+        <Link
+          href="/stats"
+          className="text-xs text-white/50 hover:text-white"
+        >
+          📊 İstatistikler
+        </Link>
       </header>
       <div className="w-full max-w-md space-y-6 rounded-2xl border border-white/10 bg-slate-900/60 p-8">
         <div>

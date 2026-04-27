@@ -166,10 +166,17 @@ export default function TtrRoomPage() {
       <header className="flex items-center justify-between border-b border-white/10 bg-slate-900/60 px-6 py-3">
         <div className="flex items-center gap-4">
           <button
+            onClick={() => router.push("/")}
+            className="text-xs text-white/60 hover:text-white"
+            title="Tüm oyunlar"
+          >
+            ← Tüm oyunlar
+          </button>
+          <button
             onClick={() => router.push("/ticket-to-ride")}
             className="text-xs text-white/60 hover:text-white"
           >
-            ← Lobi
+            Lobi
           </button>
           <div className="text-sm">
             Ticket to Ride —{" "}

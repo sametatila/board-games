@@ -64,7 +64,18 @@ export default function HomePage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-6 text-white">
+    <main className="flex min-h-screen flex-col items-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-6 text-white">
+      <header className="mb-6 flex w-full max-w-md items-center justify-between">
+        <Link href="/" className="text-xs text-white/50 hover:text-white">
+          ← Tüm oyunlar
+        </Link>
+        <Link
+          href="/stats"
+          className="text-xs text-white/50 hover:text-white"
+        >
+          📊 İstatistikler
+        </Link>
+      </header>
       <div className="w-full max-w-md space-y-6 rounded-3xl border border-white/10 bg-slate-900/60 p-8 shadow-2xl backdrop-blur">
         <header className="space-y-1 text-center">
           <h1 className="text-3xl font-semibold tracking-tight">Sunny Harbor</h1>

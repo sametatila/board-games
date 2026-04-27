@@ -296,11 +296,18 @@ export default function RoomPage() {
       <header className="flex items-center justify-between border-b border-white/10 bg-slate-900/60 px-6 py-3">
         <div className="flex items-center gap-4">
           <button
+            onClick={() => router.push("/")}
+            className="text-xs text-white/60 hover:text-white"
+            title="Tüm oyunlar"
+          >
+            ← Tüm oyunlar
+          </button>
+          <button
             onClick={() => router.push("/sunny-harbor")}
             className="text-xs text-white/60 hover:text-white"
             title="Sunny Harbor lobisine çık (oda burada açık kalır, geri dönebilirsin)"
           >
-            ← Lobi
+            Lobi
           </button>
           <h1 className="text-lg font-semibold">Sunny Harbor</h1>
           <span className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-sm tracking-[0.3em]">
