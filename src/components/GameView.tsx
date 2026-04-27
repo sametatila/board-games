@@ -262,8 +262,24 @@ export function GameView({
     }
     if (effectivePlacement === "move_ship_target") {
       // For the destination step, valid edges are everywhere this player
-      // could legally place a fresh ship right now (modulo the source ship).
-      return getValidShipEdges(state, me.id);
+      // could legally place a fresh ship right now — but the source ship
+      // must be treated as already lifted, otherwise it falsely anchors
+      // its own current edge as a "connection" and shrinks the candidate
+      // set (and hides edges on islands the chain would reach if it
+      // simply weren't there yet).
+      const stateNoSource = movingShipFrom
+        ? {
+            ...state,
+            pieces: state.pieces.filter(
+              (p) => !("edgeId" in p && p.edgeId === movingShipFrom),
+            ),
+          }
+        : state;
+      const edges = getValidShipEdges(stateNoSource, me.id);
+      // Must move — destination cannot be the source edge itself.
+      return movingShipFrom
+        ? edges.filter((e) => e !== movingShipFrom)
+        : edges;
     }
     if (effectivePlacement === "warship_upgrade") {
       // Player can upgrade any of their existing ships.
@@ -272,7 +288,7 @@ export function GameView({
         .map((p) => (p as { edgeId: string }).edgeId);
     }
     return undefined;
-  }, [effectivePlacement, state, me, inSetup]);
+  }, [effectivePlacement, state, me, inSetup, movingShipFrom]);
 
   const validHexIds = useMemo<string[] | undefined>(() => {
     if (effectivePlacement === "robber" || effectivePlacement === "knight_robber") {

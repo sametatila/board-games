@@ -51,12 +51,14 @@ function MuteButton() {
 // URL so the user lands directly in the room once they confirm.
 function NicknamePrompt({
   roomCode,
+  defaultNickname = "",
   onSubmit,
 }: {
   roomCode: string;
+  defaultNickname?: string;
   onSubmit: (nickname: string) => void;
 }) {
-  const [nick, setNick] = useState("");
+  const [nick, setNick] = useState(defaultNickname);
   const [error, setError] = useState<string | null>(null);
 
   function commit() {
@@ -265,12 +267,15 @@ export default function RoomPage() {
       router.replace("/");
       return;
     }
-    const n = nickFromStore || loadStoredNickname();
-    if (n) setNickname(n);
     // Remember this room so the lobby can offer a one-tap rejoin if the
     // user navigates away (e.g. accidentally hits the header back button).
     saveLastRoomCode(roomCode);
-  }, [nickFromStore, roomCode, router]);
+  }, [roomCode, router]);
+
+  // Suggested nickname pre-filled into the prompt: store value first,
+  // then the persisted last-used name. The user can confirm as-is or
+  // override it before joining the room.
+  const suggestedNickname = nickFromStore || loadStoredNickname() || "";
 
   const conn = useGameStore((s) => s.conn);
   const state = useGameStore((s) => s.state);
@@ -390,6 +395,7 @@ export default function RoomPage() {
           {!nickname ? (
             <NicknamePrompt
               roomCode={roomCode}
+              defaultNickname={suggestedNickname}
               onSubmit={(n) => {
                 saveNickname(n);
                 useGameStore.getState().setNickname(n);
@@ -438,7 +444,6 @@ export default function RoomPage() {
             </button>
           )}
           {state?.phase === "lobby" ? <PlayersPanel /> : state ? <PlayerScores state={state} /> : null}
-          <ChatPanel onSend={(text) => send({ t: "chat", text })} selfId={selfId} />
           {state?.pendingTrade && (
             <ActiveTradePanel
               state={state}
@@ -478,6 +483,7 @@ export default function RoomPage() {
             />
           )}
           <LogPanel />
+          <ChatPanel onSend={(text) => send({ t: "chat", text })} selfId={selfId} />
         </aside>
       </div>
 
