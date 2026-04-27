@@ -27,6 +27,7 @@ import {
   getValidRobberHexes,
   getValidPirateHexes,
   lastInitialSettlementForPlayer,
+  bestBankRatio,
 } from "@/game/reducer";
 
 const RESOURCE_ICONS: Record<Resource, string> = {
@@ -61,10 +62,12 @@ export function GameView({
   state,
   selfId,
   sendAction,
+  onResetRoom,
 }: {
   state: GameState;
   selfId: string | null;
   sendAction: (a: GameAction) => void;
+  onResetRoom: () => void;
 }) {
   const me = state.players.find((p) => p.id === selfId) ?? null;
   const currentPlayer = state.players[state.currentPlayerIndex];
@@ -77,6 +80,7 @@ export function GameView({
 
   const [placementMode, setPlacementMode] = useState<PlacementMode>(null);
   const [tradeOpen, setTradeOpen] = useState(false);
+  const [bankTradeOpen, setBankTradeOpen] = useState(false);
   const [yopModalOpen, setYopModalOpen] = useState(false);
   const [monoModalOpen, setMonoModalOpen] = useState(false);
   const [pendingRoadBuilding, setPendingRoadBuilding] = useState<string[]>([]);
@@ -129,9 +133,41 @@ export function GameView({
     lastSeenRollRef.current = key;
     if (state.diceRoll) {
       setDiceModalRoll(state.diceRoll);
+      // Belt-and-suspenders: fire the dice clatter sound directly
+      // from the state.diceRoll watcher AND from the log watcher.
+      // Whichever path resolves first wins; the second is a no-op
+      // because sfx.diceRoll just fires a short noise burst either
+      // way and the duplicate is inaudible.
       sfx.diceRoll();
     }
   }, [state.diceRoll, state.currentPlayerIndex]);
+
+  // Distinctive "your turn" chime — fires once when the active-player
+  // pointer flips to ME and the new turn is fresh (subPhase ===
+  // "awaiting_roll"). We track the last (playerIndex, subPhase) we
+  // saw, but the sound itself only triggers when the *index* changes
+  // and the new owner is the local player. Sentinel "__init__" guards
+  // the first render so a page reload mid-turn doesn't re-announce.
+  const lastTurnKeyRef = useRef<string | null>("__init__");
+  useEffect(() => {
+    const key = `${state.currentPlayerIndex}:${state.phase}`;
+    if (lastTurnKeyRef.current === "__init__") {
+      lastTurnKeyRef.current = key;
+      return;
+    }
+    const prev = lastTurnKeyRef.current;
+    lastTurnKeyRef.current = key;
+    if (!me || state.phase !== "playing") return;
+    // Only fire when the player INDEX changed (a real turn rotation),
+    // not when subPhase ticks within the same turn (rolling, robber,
+    // discarding, trading). The check on prev's index is implicit —
+    // we look for a different player number in the key prefix.
+    const prevIndex = prev?.split(":")[0];
+    if (prevIndex === String(state.currentPlayerIndex)) return;
+    if (!isMyTurn) return;
+    if (state.settings.turnSound === false) return;
+    sfx.yourTurn();
+  }, [state.currentPlayerIndex, state.phase, isMyTurn, me, state.settings.turnSound]);
 
   // SFX based on log changes (cheap pattern matching).
   useEffect(() => {
@@ -143,6 +179,7 @@ export function GameView({
     if (wasFirstSeen) return; // don't play on initial state load
     const text = last.text;
     if (text.includes("kazandı")) sfx.win();
+    else if (text.includes("attı")) sfx.diceRoll();
     else if (text.includes("yerleşim") || text.includes("şehir") || text.includes("yol")) sfx.build();
     else if (text.includes("hırsız")) sfx.robber();
     else if (text.includes("ticaret")) sfx.trade();
@@ -454,7 +491,11 @@ export function GameView({
           setupInfo={setupInfo}
         />
         {state.winnerId && (
-          <WinBanner winner={state.players.find((p) => p.id === state.winnerId)} />
+          <WinBanner
+            winner={state.players.find((p) => p.id === state.winnerId)}
+            isHost={!!me?.isHost}
+            onPlayAgain={onResetRoom}
+          />
         )}
         {state.subPhase === "stealing" && isMyTurn && me && state.robberHexId && (
           <StealModal
@@ -507,6 +548,7 @@ export function GameView({
           setPlacementMode={setPlacementMode}
           pendingRoadBuilding={pendingRoadBuilding}
           openTrade={() => setTradeOpen(true)}
+          openBank={() => setBankTradeOpen(true)}
           openYop={() => setYopModalOpen(true)}
           openMono={() => setMonoModalOpen(true)}
           sendAction={sendAction}
@@ -526,13 +568,18 @@ export function GameView({
           sendAction={sendAction}
         />
       )}
-      {!tradeOpen && state.pendingTrade && me && state.pendingTrade.fromPlayerId !== me.id && (
-        <TradeOfferToast
+      {bankTradeOpen && me && (
+        <BankTradeModal
           state={state}
           me={me}
-          onOpen={() => setTradeOpen(true)}
+          onClose={() => setBankTradeOpen(false)}
+          sendAction={sendAction}
         />
       )}
+      {/* TradeOfferToast removed: the side-panel ActiveTradePanel
+          already shows incoming offers, accept/reject status, and the
+          countdown. A duplicate toast that re-opens the trade modal
+          was overlapping that panel and felt like an interruption. */}
       {yopModalOpen && me && (
         <YearOfPlentyModal
           onClose={() => setYopModalOpen(false)}
@@ -620,23 +667,43 @@ function TurnBanner({
   if (phase === "setup_round_1" || phase === "setup_round_2") {
     const round = phase === "setup_round_1" ? "1" : "2";
     if (setupInfo?.needs === "settlement") {
-      text = `Kurulum ${round}. raunt — ${currentPlayer?.nickname} yerleşim yerini seçiyor`;
+      text = isMyTurn
+        ? `Kurulum ${round}. raunt — yerleşim yerini seç`
+        : `Kurulum ${round}. raunt — ${currentPlayer?.nickname} yerleşim yerini seçiyor`;
     } else if (setupInfo?.needs === "road") {
-      text = `Kurulum ${round}. raunt — ${currentPlayer?.nickname} yolunu seçiyor`;
+      text = isMyTurn
+        ? `Kurulum ${round}. raunt — yolunu seç`
+        : `Kurulum ${round}. raunt — ${currentPlayer?.nickname} yolunu seçiyor`;
     }
   } else if (phase === "playing") {
+    // Second-person voice when it's the local player's turn — speaks
+    // directly to them ("Zar atmalısın") instead of narrating from the
+    // side ("Mehmet zar atacak"). Other players still get the
+    // third-person commentary so they know who they're waiting on.
     if (state.subPhase === "awaiting_roll") {
-      text = `${currentPlayer?.nickname} zar atacak`;
+      text = isMyTurn
+        ? "Zar atmalısın"
+        : `${currentPlayer?.nickname} zar atacak`;
     } else if (state.subPhase === "main") {
-      text = state.diceRoll
-        ? `${currentPlayer?.nickname} (${state.diceRoll[0] + state.diceRoll[1]} attı)`
-        : `${currentPlayer?.nickname} sırada`;
+      if (isMyTurn) {
+        text = state.diceRoll
+          ? `${state.diceRoll[0] + state.diceRoll[1]} attın — sıran devam ediyor`
+          : "Sıran devam ediyor";
+      } else {
+        text = state.diceRoll
+          ? `${currentPlayer?.nickname} ${state.diceRoll[0] + state.diceRoll[1]} attı`
+          : `${currentPlayer?.nickname} sırada`;
+      }
     } else if (state.subPhase === "moving_robber") {
-      text = `${currentPlayer?.nickname} hırsızı taşıyor`;
+      text = isMyTurn
+        ? "Hırsızı taşımalısın"
+        : `${currentPlayer?.nickname} hırsızı taşıyor`;
     } else if (state.subPhase === "stealing") {
-      text = `${currentPlayer?.nickname} kurban seçiyor`;
+      text = isMyTurn
+        ? "Kart çalacağın oyuncuyu seç"
+        : `${currentPlayer?.nickname} kurban seçiyor`;
     } else if (state.subPhase === "discarding") {
-      text = `7 atıldı — kart atma sırası`;
+      text = "7 atıldı — kart atma sırası";
     }
   } else if (phase === "finished") {
     text = "Oyun bitti";
@@ -650,16 +717,38 @@ function TurnBanner({
       ? state.tradeDeadlineMs
       : state.turnDeadlineMs;
 
+  // Tone matches the urgency of the current sub-phase. The banner is
+  // the player's primary signal that something is expected of them, so
+  // make sure it actually catches the eye. We use violet for "your
+  // turn" instead of emerald — emerald reads as just another shade of
+  // sea against the painted water tiles when the camera tilts low.
+  const tone =
+    state.subPhase === "discarding"
+      ? "rose"
+      : state.subPhase === "moving_robber" ||
+        state.subPhase === "stealing"
+      ? "amber"
+      : isMyTurn
+      ? "violet"
+      : "slate";
+
+  const toneClass =
+    tone === "rose"
+      ? "border-rose-400/60 bg-rose-500/35 text-rose-50 shadow-[0_0_24px_rgba(244,63,94,0.5)]"
+      : tone === "amber"
+      ? "border-amber-300/60 bg-amber-500/30 text-amber-50 shadow-[0_0_22px_rgba(251,191,36,0.4)]"
+      : tone === "violet"
+      ? "border-indigo-300/40 bg-indigo-950/80 text-indigo-50 shadow-[0_0_24px_rgba(67,56,202,0.55)]"
+      : "border-white/20 bg-slate-900/85 text-white";
+
   return (
     <div
-      className={`pointer-events-none absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium backdrop-blur ${
-        isMyTurn
-          ? "border-emerald-300/40 bg-emerald-500/20 text-emerald-100"
-          : "border-white/10 bg-slate-900/60 text-white/80"
-      }`}
+      className={`pointer-events-none absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-3 rounded-2xl border px-6 py-2.5 text-base font-semibold backdrop-blur md:text-lg ${toneClass}`}
     >
       <span>
-        {isMyTurn && phase !== "finished" ? "Senin sıran — " : ""}
+        {isMyTurn && phase !== "finished" && (
+          <span className="mr-2 text-amber-300">▶</span>
+        )}
         {text}
       </span>
       {deadline && <Countdown deadlineMs={deadline} />}
@@ -908,7 +997,15 @@ function StealModal({
   );
 }
 
-function WinBanner({ winner }: { winner: Player | undefined }) {
+function WinBanner({
+  winner,
+  isHost,
+  onPlayAgain,
+}: {
+  winner: Player | undefined;
+  isHost: boolean;
+  onPlayAgain: () => void;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -935,6 +1032,36 @@ function WinBanner({ winner }: { winner: Player | undefined }) {
         <h2 className="mt-2 text-2xl font-semibold text-amber-200">
           {winner?.nickname ?? "Bilinmeyen oyuncu"} kazandı!
         </h2>
+        <p className="mt-2 text-sm text-white/60">
+          Tebrikler — istersen aynı odada yeni bir oyun başlat veya
+          istatistiklerini kontrol et.
+        </p>
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
+          {isHost ? (
+            <button
+              onClick={onPlayAgain}
+              className="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-400"
+            >
+              🔁 Yeni oyun başlat
+            </button>
+          ) : (
+            <span className="rounded-xl bg-slate-800 px-5 py-2.5 text-sm text-white/70">
+              Hostun yeni oyunu başlatmasını bekliyorsun…
+            </span>
+          )}
+          <a
+            href="/"
+            className="rounded-xl bg-slate-700 px-5 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-slate-600"
+          >
+            ← Anasayfa
+          </a>
+          <a
+            href="/stats"
+            className="rounded-xl bg-slate-700 px-5 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-slate-600"
+          >
+            📊 İstatistikler
+          </a>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -948,6 +1075,7 @@ function ActionBar({
   setPlacementMode,
   pendingRoadBuilding,
   openTrade,
+  openBank,
   openYop,
   openMono,
   sendAction,
@@ -961,6 +1089,7 @@ function ActionBar({
   setPlacementMode: (p: PlacementMode) => void;
   pendingRoadBuilding: string[];
   openTrade: () => void;
+  openBank: () => void;
   openYop: () => void;
   openMono: () => void;
   sendAction: (a: GameAction) => void;
@@ -992,6 +1121,13 @@ function ActionBar({
       (p) => p.kind === "settlement" && p.playerId === me.id,
     );
   const shipsAllowed = state.rules.maxShips > 0;
+  const hasValidShipEdge = useMemo(
+    () =>
+      shipsAllowed && canBuild
+        ? getValidShipEdges(state, me.id).length > 0
+        : false,
+    [shipsAllowed, canBuild, state, me.id],
+  );
 
   function btn(
     label: string,
@@ -1001,9 +1137,13 @@ function ActionBar({
     active = false,
     cost?: Partial<Record<Resource, number>>,
     tooltip?: string,
+    tooltipAlign: "start" | "center" | "end" = "center",
   ) {
+    // +15% over the original "px-3 py-2 text-sm" baseline. Action-bar
+    // buttons need to be the easiest-to-hit thing on screen, so we
+    // over-spec their size relative to the rest of the panel chrome.
     const base =
-      "rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
+      "rounded-lg px-[14px] py-[9px] text-base font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
     const c = active
       ? "bg-amber-400 text-slate-900"
       : {
@@ -1027,7 +1167,7 @@ function ActionBar({
     );
     if (!tooltip) return buttonEl;
     return (
-      <Tooltip label={tooltip} side="top" align="center" width={240}>
+      <Tooltip label={tooltip} side="top" align={tooltipAlign} width={240}>
         {buttonEl}
       </Tooltip>
     );
@@ -1060,6 +1200,7 @@ function ActionBar({
           false,
           undefined,
           "Sırada iki zar at. 7 atılırsa hırsız hareket eder ve 7'den fazla kart tutan herkes elini yarıya indirir; diğer sayılar o numaralı hex'lerin komşu yerleşim/şehirlerine kaynak verir.",
+          "start", // first button on the row → tooltip opens to the right
         )}
         {btn(
           "🛖 Yerleşim (1🌲 1🧱 1🍞 1🐑)",
@@ -1095,11 +1236,13 @@ function ActionBar({
           btn(
             "🚢 Gemi (1🌲 1🐑)",
             () => setPlacementMode(placementMode === "ship" ? null : "ship"),
-            canBuild && canAffordShip,
+            canBuild && canAffordShip && hasValidShipEdge,
             "indigo",
             placementMode === "ship",
             BUILD_COSTS.ship,
-            "Deniz kenarına gemi inşa et. Gemiler yollar gibi adaları köprüler ve En Uzun Rota bonusuna sayılır.",
+            hasValidShipEdge
+              ? "Deniz kenarına gemi inşa et. Gemiler yollar gibi adaları köprüler ve En Uzun Rota bonusuna sayılır."
+              : "Gemi koyabileceğin uygun bir deniz kenarı yok. Önce kıyıya yol veya yerleşim ulaştır.",
           )}
         {shipsAllowed &&
           state.pieces.some(
@@ -1179,7 +1322,7 @@ function ActionBar({
                 })
               }
               disabled={!canBuild}
-              className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-lg bg-rose-600 px-[14px] py-[9px] text-base font-medium text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
               title={`Kaleye saldır (${f.hpRemaining}/3 can)`}
             >
               ⚔️ Kale saldır ({f.hpRemaining}/3)
@@ -1192,7 +1335,16 @@ function ActionBar({
           "indigo",
           false,
           undefined,
-          "Diğer oyuncularla veya bankayla kaynak takası yap. Bankada 4:1, kaynak limanında 2:1, genel limanda 3:1.",
+          "Diğer oyuncularla kaynak takası teklifi yap.",
+        )}
+        {btn(
+          "🏦 Banka",
+          openBank,
+          canBuild,
+          "indigo",
+          false,
+          undefined,
+          "Bankayla takas: 4:1 standart, kaynak limanında 2:1, genel limanda 3:1.",
         )}
         {btn(
           "🎴 Kart al (1🍞 1🐑 1⛏)",
@@ -1214,6 +1366,7 @@ function ActionBar({
           false,
           undefined,
           "Sıranı tamamla ve sonraki oyuncuya geç. Zar atılmadıysa bitiremezsin.",
+          "end", // last button on the row → tooltip opens to the left
         )}
       </div>
 
@@ -1356,7 +1509,8 @@ function HandFan({
         {HAND_ORDER.map((r) => (
           <div
             key={r}
-            className="h-20 w-14 rounded-lg border border-white/10 bg-slate-900/40 opacity-30"
+            className="rounded-lg border border-white/10 bg-slate-900/40 opacity-30"
+            style={{ width: 95, height: 142 }}
           />
         ))}
       </div>
@@ -1421,28 +1575,36 @@ function HandFan({
 
   const maxFan = Math.min(0.35, items.length * 0.08);
 
+  // +30% over the previous baseline (56×84 cards, 50px overlap step).
+  // +30% over the previous baseline (73 × 109, 65px step). Hand is
+  // the central resource readout, so we keep enlarging it as players
+  // ask for more breathing room.
+  const CARD_W = 95;
+  const CARD_H = 142;
+  const STEP = 85;
+
   return (
     <div className="pointer-events-none fixed bottom-0 right-6 z-20 flex items-end gap-3 select-none">
       <div
         className="relative flex items-end justify-end"
         style={{
-          height: 140,
-          width: Math.max(120, items.length * 56),
-          paddingRight: 20,
+          height: 237,
+          width: Math.max(203, items.length * CARD_W),
+          paddingRight: 34,
         }}
       >
         {items.map((it, i) => {
           const t = items.length === 1 ? 0.5 : i / (items.length - 1);
           const angle = (-maxFan / 2 + t * maxFan) * (180 / Math.PI);
-          const xOffset = -((items.length - 1 - i) * 50);
-          const lift = Math.sin(t * Math.PI) * 6;
+          const xOffset = -((items.length - 1 - i) * STEP);
+          const lift = Math.sin(t * Math.PI) * 10;
           const highlighted =
             it.type === "resource" && highlightedKinds.has(it.kind);
           const flying = it.type === "resource" && flyingKinds.has(it.kind);
           const active = it.type === "dev" && it.active;
 
           const restingTransform = `translate(${xOffset}px, ${-lift}px) rotate(${angle}deg)`;
-          const flyingTransform = `translate(${xOffset - 40}px, -240px) rotate(${angle - 18}deg) scale(0.7)`;
+          const flyingTransform = `translate(${xOffset - 68}px, -406px) rotate(${angle - 18}deg) scale(0.7)`;
 
           const cardEl =
             it.type === "resource" ? (
@@ -1450,12 +1612,12 @@ function HandFan({
                 {it.count > 1 && (
                   <div
                     className="absolute right-0 top-0"
-                    style={{ transform: "translate(-4px, -4px)" }}
+                    style={{ transform: "translate(-6px, -6px)" }}
                   >
                     <ResourceCard
                       kind={it.kind}
-                      width={56}
-                      height={84}
+                      width={CARD_W}
+                      height={CARD_H}
                       showCount={false}
                     />
                   </div>
@@ -1463,12 +1625,12 @@ function HandFan({
                 {it.count > 2 && (
                   <div
                     className="absolute right-0 top-0"
-                    style={{ transform: "translate(-2px, -2px)" }}
+                    style={{ transform: "translate(-4px, -4px)" }}
                   >
                     <ResourceCard
                       kind={it.kind}
-                      width={56}
-                      height={84}
+                      width={CARD_W}
+                      height={CARD_H}
                       showCount={false}
                     />
                   </div>
@@ -1477,8 +1639,8 @@ function HandFan({
                   kind={it.kind}
                   count={it.count}
                   highlighted={highlighted}
-                  width={56}
-                  height={84}
+                  width={CARD_W}
+                  height={CARD_H}
                 />
               </>
             ) : it.type === "dev" ? (
@@ -1486,7 +1648,7 @@ function HandFan({
                 title={DEV_CARD_NAMES_TR[it.kind]}
                 body={DEV_CARD_LONG_DESC_TR[it.kind]}
                 side="top"
-                align="start"
+                align="end"
                 width={220}
               >
                 <button
@@ -1501,8 +1663,8 @@ function HandFan({
                     kind={it.kind}
                     count={it.count}
                     highlighted={it.active}
-                    width={56}
-                    height={84}
+                    width={CARD_W}
+                    height={CARD_H}
                   />
                 </button>
               </TitledTooltip>
@@ -1510,8 +1672,8 @@ function HandFan({
               <DevCard
                 kind={it.kind}
                 pending
-                width={56}
-                height={84}
+                width={CARD_W}
+                height={CARD_H}
                 showCount={false}
               />
             );
@@ -1521,7 +1683,7 @@ function HandFan({
               key={`${it.type}-${
                 it.kind
               }-${i}`}
-              className={`group pointer-events-auto absolute bottom-0 right-0 ease-out hover:z-30 hover:!translate-y-[-22px] hover:!scale-110 hover:!rotate-0 ${
+              className={`group pointer-events-auto absolute bottom-0 right-0 ease-out hover:z-30 hover:!translate-y-[-36px] hover:!scale-110 hover:!rotate-0 ${
                 flying
                   ? "transition-all duration-700"
                   : "transition-transform duration-200"
@@ -1555,9 +1717,8 @@ function HandFan({
           </div>
         )}
       </div>
-      <div className="absolute -top-6 right-0 rounded-md bg-slate-900/80 px-2 py-0.5 text-xs font-semibold text-white shadow">
-        {totalCardCount} kart
-      </div>
+      {/* Total-card badge removed: PlayerScores already shows everyone's
+          card count, no need to duplicate it on the hand. */}
     </div>
   );
 }
@@ -1795,33 +1956,8 @@ function MonopolyModal({
   );
 }
 
-function TradeOfferToast({
-  state,
-  me,
-  onOpen,
-}: {
-  state: GameState;
-  me: Player;
-  onOpen: () => void;
-}) {
-  const trade = state.pendingTrade!;
-  const offerer = state.players.find((p) => p.id === trade.fromPlayerId);
-  return (
-    <motion.button
-      initial={{ x: 80, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 80, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 300, damping: 24 }}
-      onClick={onOpen}
-      className="absolute right-4 top-16 z-10 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-2 text-sm shadow-lg backdrop-blur transition hover:bg-amber-500/20"
-    >
-      <div className="font-semibold text-amber-200">
-        {offerer?.nickname} sana teklif yaptı
-      </div>
-      <div className="text-xs text-white/70">tıkla, görüntüle</div>
-    </motion.button>
-  );
-}
+// (TradeOfferToast removed — the side-panel ActiveTradePanel covers
+// the same ground without stealing focus.)
 
 function TradeModal({
   state,
@@ -1922,6 +2058,11 @@ function TradeModal({
                 });
                 setGive({ wood: 0, brick: 0, wheat: 0, sheep: 0, ore: 0 });
                 setReceive({ wood: 0, brick: 0, wheat: 0, sheep: 0, ore: 0 });
+                // Close the modal — the open offer is already visible
+                // in the side panel's ActiveTradePanel and the offerer
+                // doesn't need to keep this UI open while waiting for
+                // accept/reject responses.
+                onClose();
               }}
               disabled={
                 Object.values(give).reduce((a, b) => a + b, 0) === 0 ||
@@ -1934,15 +2075,8 @@ function TradeModal({
           </div>
         )}
 
-        {/* Bank trade — only available to current player */}
-        {!trade && isMyTurn && (
-          <div className="mt-4">
-            <div className="mb-2 text-xs uppercase tracking-wider text-white/50">
-              Bankayla takas
-            </div>
-            <BankTradeRow me={me} state={state} sendAction={sendAction} />
-          </div>
-        )}
+        {/* Bank trades have their own dedicated modal now — see
+            BankTradeModal triggered from the action bar's Banka button. */}
 
         {!isMyTurn && !trade && (
           <p className="mt-4 text-center text-sm text-white/60">
@@ -2142,6 +2276,45 @@ function PendingTradeView({
   );
 }
 
+// Standalone modal for bank trades. Wraps BankTradeRow in a ModalShell
+// so the bank action gets its own focused screen, separated from the
+// player-to-player trade flow.
+function BankTradeModal({
+  state,
+  me,
+  onClose,
+  sendAction,
+}: {
+  state: GameState;
+  me: Player;
+  onClose: () => void;
+  sendAction: (a: GameAction) => void;
+}) {
+  return (
+    <ModalShell onClose={onClose}>
+      <div className="w-full max-w-xl">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-white">🏦 Bankayla takas</h3>
+          <button
+            onClick={onClose}
+            aria-label="Kapat"
+            className="rounded-md p-1 text-lg text-white/50 transition hover:bg-white/10 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-white/60">
+          Bankada standart oran 4:1. Bir kaynak limanına yerleştiysen o
+          kaynaktan 2:1, genel limanda her kaynaktan 3:1 alabilirsin.
+        </p>
+        <div className="mt-4">
+          <BankTradeRow me={me} state={state} sendAction={sendAction} />
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 function BankTradeRow({
   me,
   state,
@@ -2154,6 +2327,23 @@ function BankTradeRow({
   const order: Resource[] = ["wood", "brick", "wheat", "sheep", "ore"];
   const [give, setGiveR] = useState<Resource>("wood");
   const [recv, setRecv] = useState<Resource>("ore");
+
+  // Live ratio for the currently-selected give resource. Reducer
+  // exposes the same helper so client/server stay in sync.
+  const ratio = bestBankRatio(state, me.id, give);
+  const haveEnough = (me.resources[give] ?? 0) >= ratio;
+  const bankHas = (state.bank[recv] ?? 0) >= 1;
+  const sameResource = give === recv;
+  const canTrade = !sameResource && haveEnough && bankHas;
+
+  // Reason string used for the disabled tooltip + inline hint.
+  const reason = sameResource
+    ? "Aynı kaynağı veremezsin"
+    : !haveEnough
+    ? `${ratio}× ${RESOURCE_LABELS[give]} gerekli, elinde ${me.resources[give] ?? 0} var`
+    : !bankHas
+    ? `Bankada ${RESOURCE_LABELS[recv]} kalmadı`
+    : null;
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/40 p-3">
@@ -2168,6 +2358,7 @@ function BankTradeRow({
           </option>
         ))}
       </select>
+      <span className="font-mono text-xs text-amber-300">{ratio}:1</span>
       <span className="text-white/50">→</span>
       <select
         value={recv}
@@ -2176,7 +2367,7 @@ function BankTradeRow({
       >
         {order.map((r) => (
           <option key={r} value={r} disabled={r === give}>
-            {RESOURCE_ICONS[r]} {RESOURCE_LABELS[r]}
+            {RESOURCE_ICONS[r]} {RESOURCE_LABELS[r]} ({state.bank[r] ?? 0})
           </option>
         ))}
       </select>
@@ -2184,14 +2375,15 @@ function BankTradeRow({
         onClick={() =>
           sendAction({ type: "BANK_TRADE", playerId: me.id, give, receive: recv })
         }
-        disabled={give === recv}
-        className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40 hover:bg-emerald-400"
+        disabled={!canTrade}
+        title={reason ?? undefined}
+        className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 hover:bg-emerald-400"
       >
         Takas
       </button>
-      <span className="text-xs text-white/40">
-        (port'a göre 4:1, 3:1 veya 2:1 hesaplanır)
-      </span>
+      {reason && (
+        <span className="text-xs text-rose-300/80">{reason}</span>
+      )}
     </div>
   );
 }
@@ -2223,11 +2415,20 @@ function colorFor(name: string): string {
 // Wrap GameView for state pulling
 export function GameViewContainer({
   sendAction,
+  onResetRoom,
 }: {
   sendAction: (a: GameAction) => void;
+  onResetRoom: () => void;
 }) {
   const state = useGameStore((s) => s.state);
   const selfId = useGameStore((s) => s.selfId);
   if (!state) return null;
-  return <GameView state={state} selfId={selfId} sendAction={sendAction} />;
+  return (
+    <GameView
+      state={state}
+      selfId={selfId}
+      sendAction={sendAction}
+      onResetRoom={onResetRoom}
+    />
+  );
 }

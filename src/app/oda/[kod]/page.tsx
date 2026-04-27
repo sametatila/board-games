@@ -6,6 +6,7 @@ import {
   useGameStore,
   loadStoredNickname,
   saveLastRoomCode,
+  saveNickname,
 } from "@/lib/store";
 import { useParty } from "@/lib/useParty";
 import { isValidRoomCode } from "@/game/roomCode";
@@ -14,6 +15,7 @@ import type { GameAction } from "@/game/actions";
 import { Countdown, GameViewContainer, PlayerScores } from "@/components/GameView";
 import { Tooltip } from "@/components/Tooltip";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { Scrollable, type ScrollableHandle } from "@/components/Scrollable";
 import { setMuted, isMuted } from "@/lib/sfx";
 
 function ClientOnly({ children }: { children: React.ReactNode }) {
@@ -41,6 +43,82 @@ function MuteButton() {
     >
       {m ? "🔇" : "🔊"}
     </button>
+  );
+}
+
+// Inline nickname prompt shown when somebody opens an /oda/<kod>
+// invite link without a saved nickname. Keeps the room code on the
+// URL so the user lands directly in the room once they confirm.
+function NicknamePrompt({
+  roomCode,
+  onSubmit,
+}: {
+  roomCode: string;
+  onSubmit: (nickname: string) => void;
+}) {
+  const [nick, setNick] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  function commit() {
+    const trimmed = nick.trim();
+    if (trimmed.length < 2) {
+      setError("En az 2 karakter takma ad gir.");
+      return;
+    }
+    if (trimmed.length > 24) {
+      setError("Takma ad 24 karakteri geçemez.");
+      return;
+    }
+    onSubmit(trimmed);
+  }
+
+  return (
+    <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-slate-900/40 p-6">
+      <div className="w-full max-w-sm space-y-4 rounded-2xl border border-white/10 bg-slate-900/80 p-6 shadow-xl">
+        <div className="space-y-1 text-center">
+          <h2 className="text-xl font-semibold text-white">
+            Sunny Harbor odasına davet
+          </h2>
+          <p className="text-xs text-white/60">
+            Oda kodu:{" "}
+            <span className="font-mono tracking-[0.3em] text-white/90">
+              {roomCode}
+            </span>
+          </p>
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold tracking-wide text-white/50">
+            Takma ad
+          </span>
+          <input
+            value={nick}
+            onChange={(e) => setNick(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+            }}
+            autoFocus
+            placeholder="Örn. Mehmet"
+            maxLength={24}
+            className="w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-2.5 text-white outline-none focus:border-indigo-400"
+          />
+        </label>
+        <button
+          onClick={commit}
+          className="w-full rounded-xl bg-indigo-500 py-2.5 font-semibold text-white transition hover:bg-indigo-400"
+        >
+          Odaya katıl
+        </button>
+        {error && (
+          <p className="rounded-lg bg-rose-500/15 px-3 py-2 text-sm text-rose-200">
+            {error}
+          </p>
+        )}
+        <p className="text-center text-[11px] text-white/40">
+          Takma adın bu cihazda hatırlanır; bir sonraki oda davetinde
+          tekrar girmeni gerektirmez.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -180,16 +258,15 @@ export default function RoomPage() {
   const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
+    // Bad room code: only case where we still kick the user back to
+    // the lobby. Missing nickname is handled inline below so a shared
+    // invite link doesn't dump the recipient on the home page.
     if (!isValidRoomCode(roomCode)) {
       router.replace("/");
       return;
     }
     const n = nickFromStore || loadStoredNickname();
-    if (!n) {
-      router.replace("/");
-      return;
-    }
-    setNickname(n);
+    if (n) setNickname(n);
     // Remember this room so the lobby can offer a one-tap rejoin if the
     // user navigates away (e.g. accidentally hits the header back button).
     saveLastRoomCode(roomCode);
@@ -308,9 +385,18 @@ export default function RoomPage() {
 
       <ErrorToast />
 
-      <div className="grid flex-1 grid-cols-1 gap-4 p-2 sm:p-4 lg:grid-cols-[1fr_320px]">
-        <div className="relative min-h-[480px]">
-          {!state ? (
+      <div className="grid flex-1 grid-cols-1 gap-4 p-2 sm:p-4 lg:grid-cols-[1fr_320px] lg:min-h-0 lg:overflow-hidden">
+        <div className="relative flex min-h-[480px] flex-col lg:min-h-0 lg:overflow-y-auto">
+          {!nickname ? (
+            <NicknamePrompt
+              roomCode={roomCode}
+              onSubmit={(n) => {
+                saveNickname(n);
+                useGameStore.getState().setNickname(n);
+                setNickname(n);
+              }}
+            />
+          ) : !state ? (
             <LoadingPanel conn={conn} />
           ) : state.phase === "lobby" ? (
             <LobbyPanel
@@ -328,14 +414,17 @@ export default function RoomPage() {
                 sendAction={(action: GameAction) =>
                   send({ t: "action", action })
                 }
+                onResetRoom={() => send({ t: "reset_room" })}
               />
             </ClientOnly>
           )}
         </div>
 
         <aside
-          className={`flex flex-col gap-4 ${
-            sidePanelOpen
+          className={`show-scrollbar flex flex-col gap-4 lg:min-h-0 lg:overflow-y-auto ${
+            !nickname
+              ? "hidden"
+              : sidePanelOpen
               ? "fixed inset-x-0 bottom-0 top-16 z-40 overflow-y-auto bg-slate-950/95 p-4 backdrop-blur lg:static lg:bg-transparent lg:p-0"
               : "hidden lg:flex"
           }`}
@@ -472,7 +561,7 @@ function LobbyPanel({
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 rounded-2xl border border-white/10 bg-slate-900/40 p-8">
+    <div className="flex min-h-full flex-col items-center gap-5 rounded-2xl border border-white/10 bg-slate-900/40 p-6">
       <div className="text-center">
         <h2 className="text-2xl font-semibold">Hoş geldin, {nickname}.</h2>
         <p className="mt-1 text-sm text-white/60">
@@ -806,7 +895,7 @@ function GuideModal({
       onClick={onClose}
     >
       <div
-        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-6 shadow-2xl"
+        className="show-scrollbar max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
@@ -1264,13 +1353,11 @@ function ChatPanel({
 }) {
   const messages = useGameStore((s) => s.chat);
   const [text, setText] = useState("");
-  const listRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<ScrollableHandle | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
+    listRef.current?.scrollToBottom();
   }, [messages]);
 
   // Gartic-style: pressing TAB anywhere on the page jumps focus into
@@ -1307,9 +1394,9 @@ function ChatPanel({
         <span>Sohbet</span>
         <span>{messages.length}</span>
       </div>
-      <div
+      <Scrollable
         ref={listRef}
-        className="max-h-48 min-h-[6rem] flex-1 overflow-y-auto px-3 py-2 text-xs"
+        className="max-h-48 min-h-[6rem] flex-1 px-3 py-2 text-xs"
       >
         {messages.length === 0 && (
           <div className="text-white/30">Henüz mesaj yok…</div>
@@ -1334,7 +1421,7 @@ function ChatPanel({
             </div>
           );
         })}
-      </div>
+      </Scrollable>
       <div className="flex gap-1 border-t border-white/10 p-2">
         <input
           ref={inputRef}
@@ -1406,26 +1493,40 @@ function PlayersPanel() {
 }
 
 function LogPanel() {
-  const events = useGameStore((s) => s.recentEvents);
-  const logs = events.filter((e) => e.kind === "log");
+  // Authoritative event log lives on the snapshot (state.log) —
+  // every move the reducer recorded since the game started.
+  const log = useGameStore((s) => s.state?.log) ?? [];
+  // Match the chat panel's reading order: oldest → newest top to
+  // bottom, with auto-scroll keeping the latest visible at the foot.
+  const recent = log.slice(-50);
+  const listRef = useRef<ScrollableHandle | null>(null);
+
+  useEffect(() => {
+    listRef.current?.scrollToBottom();
+  }, [log.length]);
+
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
-      <div className="mb-2 text-xs uppercase tracking-wider text-white/40">
-        Olaylar
+    <div className="flex flex-col rounded-2xl border border-white/10 bg-slate-900/60">
+      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-xs uppercase tracking-wider text-white/40">
+        <span>Olaylar</span>
+        <span>{log.length}</span>
       </div>
-      <ul className="max-h-44 space-y-1 overflow-y-auto pr-1 text-xs text-white/70">
-        {logs.length === 0 && <li className="text-white/30">…</li>}
-        {logs.map((e, i) => (
-          <li key={i} className="flex gap-2">
-            {"ts" in e && e.ts ? (
-              <span className="shrink-0 font-mono text-[10px] text-white/30">
-                {formatClock(e.ts)}
-              </span>
-            ) : null}
-            <span>{"text" in e ? e.text : ""}</span>
-          </li>
+      <Scrollable
+        ref={listRef}
+        className="max-h-48 min-h-[6rem] flex-1 px-3 py-2 text-xs"
+      >
+        {recent.length === 0 && (
+          <div className="text-white/30">Henüz olay yok…</div>
+        )}
+        {recent.map((e) => (
+          <div key={e.id} className="mb-1 flex gap-2 leading-snug">
+            <span className="shrink-0 font-mono text-[10px] text-white/30">
+              {formatClock(e.ts)}
+            </span>
+            <span className="text-white/90">{e.text}</span>
+          </div>
         ))}
-      </ul>
+      </Scrollable>
     </div>
   );
 }

@@ -89,8 +89,17 @@ const ASSET = {
   unit_mansion: `${KIT}/unit-mansion.glb`,
   unit_ship: `${KIT}/unit-ship.glb`,
   unit_ship_large: `${KIT}/unit-ship-large.glb`,
-  // Roads and port structures.
-  path_straight: `${KIT}/path-straight.glb`,
+  pirate_ship: `${KIT}/pirate-ship.glb`,
+  thief_model: `${KIT}/thief.glb`,
+  pirate_castle_model: `${KIT}/pirate-castle.glb`,
+  port_brick_model: `${KIT}/port-brick.glb`,
+  port_ore_model: `${KIT}/port-rock.glb`,
+  port_sheep_model: `${KIT}/port-sheep.glb`,
+  port_wheat_model: `${KIT}/port-weed.glb`,
+  port_wood_model: `${KIT}/port-wood.glb`,
+  port_any_model: `${KIT}/port-any.glb`,
+  // Port and pirate-island structures (roads/piers are custom box meshes
+  // now, no GLB needed for them).
   building_dock: `${KIT}/building-dock.glb`,
   building_tower: `${KIT}/building-tower.glb`,
 } as const;
@@ -102,10 +111,10 @@ const ASSET = {
 const SPRITES = {
   hex_wood: "/assets/sprites/hex-wood.png",
   hex_brick: "/assets/sprites/hex-brick.png",
-  hex_wheat: "/assets/sprites/hex-weed.png",
+  hex_wheat: "/assets/sprites/hex-wheat.png",
   hex_sheep: "/assets/sprites/hex-sheep.png",
   hex_ore: "/assets/sprites/hex-rock.png",
-  hex_desert: "/assets/sprites/hex-dessert.png",
+  hex_desert: "/assets/sprites/hex-desert.png",
   hex_gold: "/assets/sprites/hex-gold.png",
   hex_fog: "/assets/sprites/hex-fog.png",
   port_any: "/assets/sprites/10.png",
@@ -116,6 +125,7 @@ const SPRITES = {
   port_ore: "/assets/sprites/port-rock.png",
   pirate_castle: "/assets/sprites/pirate-castle.png",
   thief: "/assets/sprites/thief.png",
+  pirate: "/assets/sprites/pirate.png",
 } as const;
 
 // Every sea-style tile uses the plain water mesh. The hex id argument
@@ -147,6 +157,20 @@ function spriteForPortKind(kind: string): string {
     case "sheep": return SPRITES.port_sheep;
     case "ore": return SPRITES.port_ore;
     default: return SPRITES.port_any;
+  }
+}
+
+// 3D model per port kind. Every port — resource ports plus the generic
+// 3:1 "any" port — has an authored GLB.
+function modelForPortKind(kind: string): string | null {
+  switch (kind) {
+    case "wood": return ASSET.port_wood_model;
+    case "brick": return ASSET.port_brick_model;
+    case "wheat": return ASSET.port_wheat_model;
+    case "sheep": return ASSET.port_sheep_model;
+    case "ore": return ASSET.port_ore_model;
+    case "any": return ASSET.port_any_model;
+    default: return null;
   }
 }
 
@@ -404,19 +428,6 @@ function HexTile({
       {isLand && hex.numberToken !== null && (
         <NumberTokenMesh number={hex.numberToken} y={TOKEN_Y} />
       )}
-      {hex.terrain === "fog" && (
-        <Text
-          position={[0, TOKEN_Y + 0.04, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          fontSize={0.6}
-          color="#1a1a1a"
-          anchorX="center"
-          anchorY="middle"
-          fontWeight={700}
-        >
-          ?
-        </Text>
-      )}
       {hasRobber && <RobberMesh y={TOKEN_Y} />}
       {isHighlighted && (
         <mesh position={[0, TOKEN_Y + 0.005, 0]} rotation={[0, 0, 0]}>
@@ -573,16 +584,16 @@ function pipFor(n: number): number {
 }
 
 function RobberMesh({ y }: { y: number }) {
-  // Painted thief sprite — billboard so it always faces the camera as
-  // the player orbits the board. The PNG has a small empty band at the
-  // bottom around the figure's feet, so we sink the sprite a touch
-  // further than half its size for the boots to actually touch the
-  // hex face.
-  const SIZE = 0.805; // 0.7 × 1.15
+  // 3D thief model authored in Meshy and optimized via gltf-transform.
+  // Carries its own baked PBR textures — no tinting.
   return (
     <group position={[0, y, 0]}>
       <Suspense fallback={null}>
-        <BillboardSprite path={SPRITES.thief} size={SIZE} y={SIZE / 2 - 0.08} />
+        <KenneyModel
+          path={ASSET.thief_model}
+          fitWidth={0.55}
+          groundOnFloor
+        />
       </Suspense>
     </group>
   );
@@ -734,24 +745,33 @@ function RoadMesh({
   const mid = v1.clone().add(v2).multiplyScalar(0.5);
   const dir = v2.clone().sub(v1);
   const length = dir.length();
-  // path-straight is modelled along its local +x axis (bbox x ∈ [-0.5,0.5]),
-  // same as the harbour boardwalks. Yaw is taken so +x rotates into the
-  // edge direction.
-  const yaw = -Math.atan2(dir.z, dir.x);
-  // Sit a hair above the dirt slab top — close enough to read as
-  // resting on the tile, but with enough bias to avoid z-fighting.
-  const y = HEX_HEIGHT_LAND + 0.003;
+  // We want the bar's long axis to follow (v1 → v2). atan2(dx, dz)
+  // gives the yaw needed to rotate the +z-aligned box into that
+  // direction.
+  const angle = Math.atan2(dir.x, dir.z);
+  // Length covers ~92% of the edge so two adjacent roads at the same
+  // corner don't visually merge into one continuous bar.
+  const barLen = length * 0.92;
+  const barWidth = 0.13;
+  const barHeight = 0.06;
+  // Sit just above the dirt tile top (HEX_HEIGHT_LAND ≈ 0.173) so the
+  // road reads as resting on the tile face, not floating.
+  const baseY = HEX_HEIGHT_LAND + 0.005;
   return (
-    <PopInGroup position={[mid.x, y, mid.z]}>
-      <Suspense fallback={null}>
-        <KenneyModel
-          path={ASSET.path_straight}
-          rotation={[0, yaw, 0]}
-          fitWidth={length * 0.92}
-          groundOnFloor
-          tintColor={color}
-        />
-      </Suspense>
+    <PopInGroup position={[mid.x, baseY, mid.z]}>
+      <group rotation={[0, angle, 0]}>
+        {/* Bottom plank — slightly darker wood for shadow contrast */}
+        <mesh position={[0, barHeight / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[barWidth, barHeight, barLen]} />
+          <meshStandardMaterial color={color} roughness={0.55} metalness={0.1} />
+        </mesh>
+        {/* Highlight stripe — same colour boosted, gives the bar
+            depth from above without an extra material */}
+        <mesh position={[0, barHeight + 0.002, 0]} receiveShadow>
+          <boxGeometry args={[barWidth * 0.7, 0.005, barLen * 0.92]} />
+          <meshStandardMaterial color={color} roughness={0.35} metalness={0.2} />
+        </mesh>
+      </group>
     </PopInGroup>
   );
 }
@@ -763,23 +783,38 @@ function ShipMesh({
   v2,
   color,
   isWarship,
+  seaCenter,
 }: {
   v1: THREE.Vector3;
   v2: THREE.Vector3;
   color: string;
   isWarship?: boolean;
+  /** World-XZ of the adjacent sea hex's centre. When provided, the ship is
+   *  nudged toward it so it sits clearly on the water instead of half on
+   *  the coastal land tile. */
+  seaCenter?: [number, number];
 }) {
   const mid = v1.clone().add(v2).multiplyScalar(0.5);
   const dir = v2.clone().sub(v1);
   const length = dir.length();
   const angle = Math.atan2(dir.x, dir.z);
+  let posX = mid.x;
+  let posZ = mid.z;
+  if (seaCenter) {
+    // Push ~25% of the way from the edge midpoint toward the sea hex centre.
+    const SHORE_OFFSET = 0.3;
+    const dx = seaCenter[0] - mid.x;
+    const dz = seaCenter[1] - mid.z;
+    posX += dx * SHORE_OFFSET;
+    posZ += dz * SHORE_OFFSET;
+  }
   return (
-    <PopInGroup position={[mid.x, HEX_HEIGHT_SEA, mid.z]}>
+    <PopInGroup position={[posX, HEX_HEIGHT_SEA, posZ]}>
       <Suspense fallback={null}>
         <KenneyModel
           path={isWarship ? ASSET.unit_ship_large : ASSET.unit_ship}
           rotation={[0, angle, 0]}
-          fitWidth={length * 0.85}
+          fitWidth={length * 0.595}
           groundOnFloor
           tintColor={color}
         />
@@ -788,23 +823,18 @@ function ShipMesh({
   );
 }
 
-// Tall black sail used for the pirate. Stands up over a sea hex.
+// 3D pirate ship sitting on a sea hex. Uses the AI-authored GLB which
+// already carries its own skull-and-crossbones texture, so no tinting.
 function PirateMesh({ y }: { y: number }) {
   return (
     <group position={[0, y, 0]}>
-      <mesh castShadow receiveShadow position={[0, 0.18, 0]}>
-        <coneGeometry args={[0.16, 0.42, 16]} />
-        <meshStandardMaterial color="#0a0a0a" roughness={0.6} />
-      </mesh>
-      <mesh castShadow receiveShadow position={[0, 0.42, 0]}>
-        <sphereGeometry args={[0.07, 16, 12]} />
-        <meshStandardMaterial color="#0a0a0a" roughness={0.6} />
-      </mesh>
-      {/* Crossbones plate (just a square) */}
-      <mesh position={[0, 0.34, 0.08]} rotation={[Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[0.1, 0.1]} />
-        <meshStandardMaterial color="#f0eee5" />
-      </mesh>
+      <Suspense fallback={null}>
+        <KenneyModel
+          path={ASSET.pirate_ship}
+          fitWidth={1.0}
+          groundOnFloor
+        />
+      </Suspense>
     </group>
   );
 }
@@ -850,6 +880,40 @@ function buildEdgePosMap(
   return map;
 }
 
+// For each edge, return the world-XZ center of its sea-side neighbour hex
+// (if exactly one of the two adjacent hexes is sea). Coastal edges get an
+// entry; pure-sea edges (both neighbours sea) and inland edges get none.
+function buildEdgeSeaSideMap(hexes: Hex[]): Map<string, [number, number]> {
+  const out = new Map<string, [number, number]>();
+  const seaSet = new Set<string>();
+  const hexById = new Map<string, Hex>();
+  for (const h of hexes) {
+    hexById.set(h.id, h);
+    if (h.terrain === "sea") seaSet.add(h.id);
+  }
+  // edge -> list of adjacent hex ids
+  const edgeToHexes = new Map<string, string[]>();
+  for (const h of hexes) {
+    const ids = hexEdgeIds(h.coord);
+    for (const eId of ids) {
+      const list = edgeToHexes.get(eId) ?? [];
+      list.push(h.id);
+      edgeToHexes.set(eId, list);
+    }
+  }
+  for (const [eId, hexIds] of edgeToHexes) {
+    if (hexIds.length !== 2) continue;
+    const [a, b] = hexIds;
+    const aSea = seaSet.has(a);
+    const bSea = seaSet.has(b);
+    if (aSea === bSea) continue; // both sea or both land — no shore offset
+    const seaHex = hexById.get(aSea ? a : b)!;
+    const [cx, , cz] = hexToWorld(seaHex.coord);
+    out.set(eId, [cx, cz]);
+  }
+  return out;
+}
+
 function VertexPicker({
   hexes,
   pieces,
@@ -863,17 +927,13 @@ function VertexPicker({
 }) {
   const vertexPos = useMemo(() => buildVertexPosMap(hexes), [hexes]);
   const allowed = validIds ? new Set(validIds) : null;
-  const occupied = new Set(
-    pieces
-      .filter(
-        (p): p is Extract<BuiltPiece, { kind: "settlement" | "city" }> =>
-          p.kind === "settlement" || p.kind === "city",
-      )
-      .map((p) => p.vertexId),
-  );
+  // Cities upgrade existing settlements, so we trust validIds to tell
+  // us where pickers should appear and don't filter occupied vertices
+  // out here. The reducer already restricts validIds correctly:
+  // - settlement placement → empty corners only
+  // - city upgrade        → vertices with one of MY settlements only
   const items = [];
   for (const [id, pos] of vertexPos) {
-    if (occupied.has(id)) continue;
     if (allowed && !allowed.has(id)) continue;
     items.push(
       <mesh
@@ -995,49 +1055,75 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
 
         // 2:1 ports already paint their resource cargo onto the dock
         // sprite, so the extra "2:1" tag would be redundant. Only the
-        // generic 3:1 needs a label. 2:1 sprites are 30% smaller so
-        // they don't dominate next to land. Y offset is tuned so the
-        // sprite's painted base sits just above the sea, not floating.
+        // All ports — resource and 3:1 — now share the same scale and
+        // vertical offset. We keep `isGeneric` only to switch the label
+        // text below.
         const isGeneric = port.kind === "any";
-        // 3:1 (generic, painted on 10.png) keeps its baseline 0.69 size;
-        // resource 2:1 ports were 30% smaller than generic, so we bump
-        // them up 20% to bring them back closer in scale.
-        const portSize = isGeneric ? 0.69 : 0.58;
-        const portY = portSize / 2;
+        const portSize = 0.58;
 
-        // Two boardwalks — one from each shore corner of the edge out to
-        // the dock. Together they form a triangular pier that visually
-        // ties the dock back to the hexagon.
+        // Two boardwalks — one from each shore corner of the edge out
+        // to the dock. Each plank is a small wooden bar that tilts down
+        // from the land hex's top to sea level so they read as a real
+        // pier ramping from shore to dock. Pure box geometry; no GLB
+        // load and we control the size precisely.
         function plank(corner: THREE.Vector3, key: string) {
-          const from = new THREE.Vector3(corner.x, HEX_HEIGHT_LAND, corner.z);
+          // Pull the hex side further inboard — corner → midpoint at
+          // 40% pushes the plank end physically into the tile rather
+          // than perched on its rim. Y stays at the previous offset so
+          // vertical positioning isn't affected.
+          const innerCorner = new THREE.Vector3(
+            corner.x + (mid.x - corner.x) * 0.4,
+            HEX_HEIGHT_LAND - 0.08,
+            corner.z + (mid.z - corner.z) * 0.4,
+          );
+          const from = innerCorner;
           const to = new THREE.Vector3(
             dockCenter.x,
             HEX_HEIGHT_SEA + 0.04,
             dockCenter.z,
           );
-          // Slightly trim the dock side so the two planks don't bury into
-          // the dock sprite — they should converge AT the dock, not pass
-          // through it.
+          // Trim the dock end ~5% so the two planks meet AT the dock
+          // sprite instead of poking through it.
           const trimmed = from.clone().lerp(to, 0.95);
           const center = from.clone().add(trimmed).multiplyScalar(0.5);
-          const len = from.distanceTo(trimmed);
-          // path-straight is modelled along its local +x axis (bbox
-          // x ∈ [-0.5, 0.5]). Yaw is taken so that +x rotates into the
-          // (to - from) direction in the XZ plane.
           const dx = trimmed.x - from.x;
+          const dy = trimmed.y - from.y;
           const dz = trimmed.z - from.z;
-          const yaw = Math.atan2(dz, dx);
+          // Length along the slope, plus the angles needed to align a
+          // +z-extended box into the (from → trimmed) line.
+          const horiz = Math.hypot(dx, dz);
+          const len = Math.hypot(horiz, dy);
+          const yaw = Math.atan2(dx, dz);
+          // Tilt so the plank slopes down toward the dock (negative
+          // because Three.js x-axis rotation tips the +z end downward).
+          const tilt = -Math.atan2(dy, horiz);
+          // +10% over the previous 0.13 / 0.045 baselines.
+          const planKWidth = 0.143;
+          const plankHeight = 0.0495;
           return (
-            <Suspense fallback={null} key={key}>
-              <KenneyModel
-                path={ASSET.path_straight}
-                position={[center.x, center.y, center.z]}
-                rotation={[0, -yaw, 0]}
-                fitWidth={len * 1.02}
-                groundOnFloor
-                tintColor="#a37844"
-              />
-            </Suspense>
+            <group
+              key={key}
+              position={[center.x, center.y, center.z]}
+              rotation={[0, yaw, 0]}
+            >
+              <group rotation={[tilt, 0, 0]}>
+                {/* Bottom support — peach/coral wood matching the
+                    painted dock sprites */}
+                <mesh castShadow receiveShadow>
+                  <boxGeometry args={[planKWidth, plankHeight, len]} />
+                  <meshStandardMaterial color="#ea956f" roughness={0.85} />
+                </mesh>
+                {/* Top deck — same peach tone, slightly brighter for
+                    contrast from directly above */}
+                <mesh
+                  position={[0, plankHeight / 2 + 0.003, 0]}
+                  receiveShadow
+                >
+                  <boxGeometry args={[planKWidth * 0.95, 0.006, len * 0.97]} />
+                  <meshStandardMaterial color="#f1a989" roughness={0.75} />
+                </mesh>
+              </group>
+            </group>
           );
         }
 
@@ -1047,11 +1133,22 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
             {plank(e.v2, "p2")}
             <Suspense fallback={null}>
               <group position={[dockCenter.x, HEX_HEIGHT_SEA, dockCenter.z]}>
-                <BillboardSprite
-                  path={spriteForPortKind(port.kind)}
-                  size={portSize}
-                  y={portSize * 0.42}
-                />
+                {(() => {
+                  const model = modelForPortKind(port.kind);
+                  return model ? (
+                    <KenneyModel
+                      path={model}
+                      fitWidth={portSize * 0.9}
+                      groundOnFloor
+                    />
+                  ) : (
+                    <BillboardSprite
+                      path={spriteForPortKind(port.kind)}
+                      size={portSize}
+                      y={portSize * 0.42}
+                    />
+                  );
+                })()}
               </group>
             </Suspense>
 
@@ -1062,7 +1159,7 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
                 // resource 2:1 sprites have shorter banners, so the
                 // label needs an extra lift so it sits clearly above
                 // the painted dock instead of crowding it.
-                HEX_HEIGHT_SEA + portSize * (isGeneric ? 0.95 : 1.15),
+                HEX_HEIGHT_SEA + portSize * 1.15,
                 dockCenter.z,
               ]}
             >
@@ -1096,14 +1193,36 @@ function PortMarkers({ hexes, ports }: { hexes: Hex[]; ports: Port[] }) {
 export function Board3D(props: Board3DProps) {
   const vertexPos = useMemo(() => buildVertexPosMap(props.hexes), [props.hexes]);
   const edgePos = useMemo(() => buildEdgePosMap(props.hexes), [props.hexes]);
+  const edgeSeaSide = useMemo(
+    () => buildEdgeSeaSideMap(props.hexes),
+    [props.hexes],
+  );
 
   const playerColor = (id: string) => {
     const p = props.players.find((pl) => pl.id === id);
     return p ? PLAYER_COLORS[p.color] ?? "#ffffff" : "#ffffff";
   };
 
+  // Reset button: send the camera and orbit target back to the home
+  // position. We use a ref to the OrbitControls instance so we can
+  // dispatch its built-in reset without round-tripping through state.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orbitRef = useRef<any>(null);
+  const resetCamera = () => {
+    if (orbitRef.current?.reset) orbitRef.current.reset();
+  };
+
   return (
-    <Canvas
+    <div className="relative h-full w-full">
+      <button
+        type="button"
+        onClick={resetCamera}
+        className="absolute right-3 top-3 z-10 rounded-md border border-white/10 bg-slate-900/70 px-2 py-1 text-xs text-white/80 backdrop-blur transition hover:bg-slate-800"
+        title="Kamerayı varsayılan pozisyona döndür"
+      >
+        ⟲ Sıfırla
+      </button>
+      <Canvas
       shadows="soft"
       camera={{ position: [0, 11, 9], fov: 45, near: 0.1, far: 100 }}
       style={{ width: "100%", height: "100%" }}
@@ -1222,6 +1341,7 @@ export function Board3D(props: Board3DProps) {
               v2={e.v2}
               color={playerColor(p.playerId)}
               isWarship={p.kind === "warship"}
+              seaCenter={edgeSeaSide.get(p.edgeId)}
             />
           );
         })}
@@ -1233,7 +1353,7 @@ export function Board3D(props: Board3DProps) {
           const [x, , z] = hexToWorld(hex.coord);
           return (
             <group position={[x, 0, z]}>
-              <PirateMesh y={HEX_HEIGHT_SEA + 0.05} />
+              <PirateMesh y={HEX_HEIGHT_SEA - 0.08} />
             </group>
           );
         })()}
@@ -1253,16 +1373,16 @@ export function Board3D(props: Board3DProps) {
             <group key={f.hexId} position={[x, HEX_HEIGHT_DESERT, z]}>
               <PlayerRing color={ringColor} radius={0.55} />
               <Suspense fallback={null}>
-                <BillboardSprite
-                  path={SPRITES.pirate_castle}
-                  size={1.2}
-                  y={0.6}
+                <KenneyModel
+                  path={ASSET.pirate_castle_model}
+                  fitWidth={0.66}
+                  groundOnFloor
                 />
               </Suspense>
               {Array.from({ length: f.hpRemaining }).map((_, i) => (
                 <mesh
                   key={`hp${i}`}
-                  position={[(i - (f.hpRemaining - 1) / 2) * 0.09, 0.95, 0]}
+                  position={[(i - (f.hpRemaining - 1) / 2) * 0.09, 0.83, 0]}
                   castShadow
                 >
                   <boxGeometry args={[0.06, 0.06, 0.06]} />
@@ -1330,24 +1450,26 @@ export function Board3D(props: Board3DProps) {
         )}
 
         <OrbitControls
+          ref={orbitRef}
           enablePan
-          // Right-mouse / two-finger drag pans; tweak speed so it feels close
-          // to a colonist.io style camera.
-          panSpeed={1.0}
+          // Pan is the primary gesture (board games are mostly about
+          // looking around, not rotating the camera). Left-mouse drag
+          // pans, right-mouse drag rotates — same convention used by
+          // colonist.io and Google Maps. Touch: one finger pans,
+          // two fingers rotate/zoom.
+          panSpeed={1.5}
+          rotateSpeed={0.7}
           screenSpacePanning
-          // Left-mouse drag rotates, right-mouse drag pans, wheel zooms.
           mouseButtons={{
-            LEFT: THREE.MOUSE.ROTATE,
+            LEFT: THREE.MOUSE.PAN,
             MIDDLE: THREE.MOUSE.DOLLY,
-            RIGHT: THREE.MOUSE.PAN,
+            RIGHT: THREE.MOUSE.ROTATE,
           }}
-          // Touch: 1 finger rotate, 2 fingers pan/dolly.
           touches={{
-            ONE: THREE.TOUCH.ROTATE,
-            TWO: THREE.TOUCH.DOLLY_PAN,
+            ONE: THREE.TOUCH.PAN,
+            TWO: THREE.TOUCH.DOLLY_ROTATE,
           }}
-          // Arrow keys pan (Three.js OrbitControls default keymap).
-          keyPanSpeed={20}
+          keyPanSpeed={28}
           minDistance={5}
           maxDistance={42}
           minPolarAngle={Math.PI / 6}
@@ -1356,6 +1478,7 @@ export function Board3D(props: Board3DProps) {
         />
       </Suspense>
     </Canvas>
+    </div>
   );
 }
 

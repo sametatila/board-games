@@ -173,4 +173,36 @@ export const sfx = {
     tone({ freq: 880, type: "sine", duration: 0.08, volume: 0.12 });
     tone({ freq: 1320, type: "sine", duration: 0.08, volume: 0.12, delay: 0.1 });
   },
+  /** "It's your turn now" — louder than other cues, distinctive
+   *  rising chime so the player notices even if they alt-tabbed away. */
+  yourTurn() {
+    // Bell-like rising arpeggio: C5 → E5 → G5 with a sustained final
+    // note. Significantly louder than the other ambient cues.
+    const notes: { f: number; d: number; t: number }[] = [
+      { f: 523, d: 0.16, t: 0 },
+      { f: 659, d: 0.16, t: 0.12 },
+      { f: 784, d: 0.32, t: 0.24 },
+    ];
+    for (const n of notes) {
+      tone({
+        freq: n.f,
+        type: "triangle",
+        duration: n.d,
+        volume: 0.28,
+        delay: n.t,
+        attack: 0.01,
+        release: 0.08,
+      });
+      // Brighter overtone for clarity on small speakers.
+      tone({
+        freq: n.f * 2,
+        type: "sine",
+        duration: n.d,
+        volume: 0.08,
+        delay: n.t,
+        attack: 0.01,
+        release: 0.08,
+      });
+    }
+  },
 };

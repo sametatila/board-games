@@ -44,3 +44,70 @@ body {
 .uppercase {
   text-transform: none !important;
 }
+
+/* ----- Global scrollbar styling -----------------------------------
+   Default styling for all native scrollbars: slim, dark, no arrow
+   buttons, matches the slate UI. Works in Chrome/Edge/Firefox out of
+   the box. Opera on Windows renders its own OS-level chrome that the
+   browser exposes via WebKit pseudos, so we still hit it.
+
+   For places where Opera's native bar refuses to be styled (or where
+   we want guaranteed cross-browser parity), use the <Scrollable>
+   component instead — it draws an HTML scrollbar of our own. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.55) rgba(15, 23, 42, 0.45);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.45);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-height: 24px;
+  transition: background-color 200ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(203, 213, 225, 0.85);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.95);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Hide arrow buttons (Edge/Opera Windows themes) on every variant. */
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-button:single-button,
+::-webkit-scrollbar-button:double-button,
+::-webkit-scrollbar-button:start:decrement,
+::-webkit-scrollbar-button:end:increment,
+::-webkit-scrollbar-button:vertical:start:increment,
+::-webkit-scrollbar-button:vertical:end:decrement,
+::-webkit-scrollbar-button:horizontal:start:increment,
+::-webkit-scrollbar-button:horizontal:end:decrement {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
+/* Backwards-compat alias: `.show-scrollbar` was an opt-in class while
+   we were testing global hide. The default rules above already match
+   what it used to do, so the class is now a no-op and existing
+   markup keeps working without changes. */
+
+html {
+  scroll-behavior: smooth;
+}

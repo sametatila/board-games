@@ -204,6 +204,13 @@ export type GameState = {
   log: GameEventLogEntry[];
   bank: Record<Resource, number>;
   devDeck: DevelopmentCard[];
+  /** Pre-shuffled dice deck used by the colonist.io-style "balanced
+   *  dice" algorithm. Each entry is a (d1, d2) pair; a roll consumes
+   *  one entry from the front. Reshuffled when only 12 entries
+   *  remain. Empty in old saves — migration regenerates it. */
+  diceDeck: [number, number][];
+  /** Total of the previous roll, used to soften consecutive repeats. */
+  lastRollTotal: number | null;
   winnerId: string | null;
 };
 

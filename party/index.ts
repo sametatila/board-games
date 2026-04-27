@@ -72,6 +72,8 @@ function buildInitialState(roomCode: string): GameState {
     log: [],
     bank: fullBank(),
     devDeck: [],
+    diceDeck: [],
+    lastRollTotal: null,
     winnerId: null,
   };
 }
@@ -99,6 +101,8 @@ function migrateState(stored: GameState, roomId: string): GameState {
     };
   });
   merged.devDeck = merged.devDeck ?? [];
+  merged.diceDeck = merged.diceDeck ?? [];
+  merged.lastRollTotal = merged.lastRollTotal ?? null;
   merged.bank = merged.bank ?? fresh.bank;
   merged.rules = merged.rules ?? fresh.rules;
   merged.log = merged.log ?? [];
@@ -561,11 +565,26 @@ export default class GameRoom implements Party.Server {
           return;
         }
         if (this.state.phase !== "lobby") return;
+        // Drop any disconnected stragglers before starting — they're
+        // still in the roster only because socket close keeps them as
+        // offline placeholders for refresh-friendly reconnects. Once
+        // the game starts they should not be counted as participants.
+        const beforeCount = this.state.players.length;
+        this.state.players = this.state.players.filter((p) => p.connected);
+        this.state.turnOrder = this.state.turnOrder.filter((id) =>
+          this.state.players.some((p) => p.id === id),
+        );
+        if (this.state.players.length < beforeCount) {
+          events.push({
+            kind: "log",
+            text: "Bağlantısı olmayan oyuncular oyuna dahil edilmedi.",
+          });
+        }
         if (this.state.players.length < 2) {
           send(sender, {
             t: "error",
             code: "not_enough_players",
-            message: "En az 2 oyuncu gerekli.",
+            message: "En az 2 bağlı oyuncu gerekli.",
           });
           return;
         }

@@ -71,6 +71,8 @@ const initial: GameState = {
   log: [],
   bank: fullBank(),
   devDeck: [],
+  diceDeck: [],
+  lastRollTotal: null,
   winnerId: null,
 };
 

@@ -653,6 +653,67 @@ function rollDice(rng?: () => number): [number, number] {
   return [Math.floor(r() * 6) + 1, Math.floor(r() * 6) + 1];
 }
 
+/** Build a fresh 36-entry dice deck containing every (d1, d2) pair,
+ *  shuffled. Used to seed the deck at game start and after each
+ *  reshuffle (when the live deck shrinks to 12 cards). */
+function makeDiceDeck(rng?: () => number): [number, number][] {
+  const r = rng ?? Math.random;
+  const deck: [number, number][] = [];
+  for (let a = 1; a <= 6; a++) {
+    for (let b = 1; b <= 6; b++) deck.push([a, b]);
+  }
+  // Fisher-Yates shuffle.
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+/** Colonist.io-style "balanced" dice: pull the next pair from the
+ *  pre-shuffled deck. If the next pair would repeat the previous total,
+ *  there's a 30% chance we skip past it (it stays in the deck and gets
+ *  redrawn later) — that's the streak-softening tweak from their
+ *  published algorithm. The deck is reshuffled when only 12 cards
+ *  remain so streaks late in the cycle don't get too predictable.
+ *
+ *  Mutates state.diceDeck and state.lastRollTotal. */
+function drawDice(state: GameState, rng?: () => number): [number, number] {
+  const r = rng ?? Math.random;
+  if (!state.diceDeck || state.diceDeck.length === 0) {
+    state.diceDeck = makeDiceDeck(rng);
+  }
+  // Decide which entry to pop. We may skip ahead a few entries to
+  // dampen streaks; if every candidate matches the previous total we
+  // give up and just take the first one.
+  const last = state.lastRollTotal;
+  let idx = 0;
+  if (last !== null) {
+    for (let i = 0; i < state.diceDeck.length; i++) {
+      const [a, b] = state.diceDeck[i];
+      if (a + b !== last) {
+        idx = i;
+        break;
+      }
+      // Same-total candidate — keep with 30% probability (i.e. take
+      // it as-is) so the streak protection isn't absolute.
+      if (r() < 0.3) {
+        idx = i;
+        break;
+      }
+    }
+  }
+  const pair = state.diceDeck[idx];
+  state.diceDeck.splice(idx, 1);
+  state.lastRollTotal = pair[0] + pair[1];
+  // Reshuffle when the remaining deck is small enough that the
+  // distribution would otherwise look noticeably skewed.
+  if (state.diceDeck.length <= 12) {
+    state.diceDeck = makeDiceDeck(rng);
+  }
+  return pair;
+}
+
 // Build the dev card deck. Standard Catan: 14 knight, 5 VP, 2 road, 2 yop, 2 mono = 25.
 // For 7-8 player games we double the deck.
 function buildDevDeck(playerCount: number): DevelopmentCard[] {
@@ -680,7 +741,7 @@ function buildDevDeck(playerCount: number): DevelopmentCard[] {
 
 // Determine the best (lowest) bank trade ratio a player can use for a given resource.
 // Default 4:1, port "any" (3:1), or specific port (2:1).
-function bestBankRatio(state: GameState, playerId: string, give: Resource): number {
+export function bestBankRatio(state: GameState, playerId: string, give: Resource): number {
   let best = 4;
   const playerVerts = new Set(
     state.pieces
@@ -1023,6 +1084,9 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
       state.subPhase = "main";
       state.currentPlayerIndex = 0;
       state.devDeck = buildDevDeck(state.players.length);
+      // Fresh balanced-dice deck for this game.
+      state.diceDeck = makeDiceDeck();
+      state.lastRollTotal = null;
 
       // Scale resource bank to the board / player count. Classic 19-hex board
       // ships 19 of each. We give roughly the same per-resource-hex ratio so
@@ -1191,7 +1255,9 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
       if (state.subPhase !== "awaiting_roll") return fail("wrong_subphase");
       const cp = currentPlayer(state);
       if (cp.id !== action.playerId) return fail("not_your_turn");
-      const dice = action.dice ?? rollDice();
+      // Pull from the colonist.io-style balanced deck. action.dice
+      // override is still honoured for tests that need a fixed roll.
+      const dice = action.dice ?? drawDice(state);
       state.diceRoll = dice;
       const total = dice[0] + dice[1];
       log(state, `${cp.nickname} ${total} attı (${dice[0]} + ${dice[1]}).`, cp.id);
@@ -1746,12 +1812,28 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
         if ((cp.resources[r as Resource] ?? 0) < (n ?? 0))
           return fail("not_enough_to_give");
       }
+      // Pre-reject any player who doesn't physically have what the
+      // offerer is asking for. Saves them from having to click "Reddet"
+      // on an offer they couldn't honour anyway, and lets the offerer
+      // see at a glance which seats are still in play.
+      const autoRejected: string[] = [];
+      for (const p of state.players) {
+        if (p.id === cp.id) continue;
+        for (const [r, n] of Object.entries(action.receive)) {
+          const need = n ?? 0;
+          if (need <= 0) continue;
+          if ((p.resources[r as Resource] ?? 0) < need) {
+            autoRejected.push(p.id);
+            break;
+          }
+        }
+      }
       state.pendingTrade = {
         fromPlayerId: cp.id,
         give: { ...action.give },
         receive: { ...action.receive },
         acceptedBy: [],
-        rejectedBy: [],
+        rejectedBy: autoRejected,
       };
       state.subPhase = "trading";
       state.tradeDeadlineMs = nextTradeDeadline(state);
@@ -1760,6 +1842,25 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
         `${cp.nickname} ticaret teklifi: ${formatResourceMap(action.give)} → ${formatResourceMap(action.receive)}.`,
         cp.id,
       );
+      // Edge case: every other player was auto-rejected. The trade is
+      // dead on arrival; clear it so the offerer doesn't have to wait
+      // for the timeout. (Mirrors the "all rejected" path in
+      // REJECT_TRADE_OFFER.)
+      const otherConnected = state.players.filter(
+        (p) => p.id !== cp.id && p.connected,
+      );
+      if (
+        otherConnected.length > 0 &&
+        otherConnected.every((p) => autoRejected.includes(p.id))
+      ) {
+        state.pendingTrade = null;
+        state.tradeDeadlineMs = null;
+        if (state.subPhase === "trading") state.subPhase = "main";
+        log(
+          state,
+          "Hiçbir oyuncu istenen kaynağa sahip değil — teklif iptal edildi.",
+        );
+      }
       return { ok: true, state };
     }
 

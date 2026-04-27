@@ -167,60 +167,55 @@ export function hexEdgeIds(hex: AxialCoord): EdgeId[] {
   return [0, 1, 2, 3, 4, 5].map((s) => edgeId(hex, s));
 }
 
-// Return the (up to 2 other) vertex IDs adjacent to a given vertex via its 3 outgoing edges.
-// Useful for distance-2 settlement rule.
+// Return the 3 vertex IDs adjacent to a given vertex via its 3 outgoing edges.
+// Used by the distance-2 settlement rule.
+//
+// Each vertex is shared by up to 3 hex-owners. From the perspective of any
+// owner hex H, the vertex sits at some corner k of H. The two neighbor
+// vertices on H around that corner are corners (k-1) and (k+1). Iterating
+// over all 3 owner hexes and collecting their (k-1) and (k+1) corners,
+// then deduplicating, yields exactly the 3 adjacent vertices (each
+// neighbor is shared by exactly two of the owner hexes, so it appears
+// twice — dedupe collapses 6 entries to 3).
 export function vertexAdjacentVertices(
   hex: AxialCoord,
   corner: number,
 ): VertexId[] {
-  // Adjacent vertex along the hex edge to the previous corner
-  const prev = vertexId(hex, (corner + 5) % 6);
-  // Adjacent along the next edge
-  const next = vertexId(hex, (corner + 1) % 6);
-  // Adjacent through the spoke into the neighbor hex
-  // The neighbor across this corner's two side dirs gives the third vertex
-  const owners = (function () {
-    const c = ((corner % 6) + 6) % 6;
-    const dirs = [
-      [2, 1],
-      [1, 0],
-      [0, 5],
-      [5, 4],
-      [4, 3],
-      [3, 2],
-    ] as const;
-    const [d1, d2] = dirs[c];
-    const n1 = neighbor(hex, d1);
-    const n2 = neighbor(hex, d2);
-    return [n1, n2];
-  })();
-  // Third adjacent vertex = corner of neighbor's "opposite" direction
-  const third = vertexId(owners[0], (corner + 4) % 6);
-  return [prev, next, third];
+  const self = vertexId(hex, corner);
+  const owners = vertexOwners(hex, corner);
+  const seen = new Set<VertexId>();
+  const out: VertexId[] = [];
+  for (const o of owners) {
+    for (const dc of [-1, 1]) {
+      const k = ((o.corner + dc) % 6 + 6) % 6;
+      const id = vertexId(o.coord, k);
+      if (id === self) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
 }
 
 export function vertexEdges(hex: AxialCoord, corner: number): EdgeId[] {
-  // For a pointy-top hex, corner c is the meeting point of two sides on this
-  // hex plus one more edge that runs into the adjacent neighbor hex through
-  // that corner.
-  //   corner 0 (N)  → sides 1 (NE) + 2 (NW)
-  //   corner 1 (NE) → sides 0 (E)  + 1 (NE)
-  //   corner 2 (SE) → sides 5 (SE) + 0 (E)
-  //   corner 3 (S)  → sides 4 (SW) + 5 (SE)
-  //   corner 4 (SW) → sides 3 (W)  + 4 (SW)
-  //   corner 5 (NW) → sides 2 (NW) + 3 (W)
-  // Closed form: corner c → sides ((1 - c + 6) % 6) and ((2 - c + 6) % 6).
-  const c = ((corner % 6) + 6) % 6;
-  const sideA = (1 - c + 6) % 6;
-  const sideB = (2 - c + 6) % 6;
-  // The third edge goes through the corner into one of the two neighbors that
-  // share this corner. Use VERTEX_NEIGHBOR_DIRS to pick a neighbor and the
-  // matching side label on that neighbor.
-  const [d1] = VERTEX_NEIGHBOR_DIRS[c];
-  const nb = neighbor(hex, d1);
-  // The neighbor's side that points back across this same corner is the
-  // opposite of sideA on the original hex.
-  return [edgeId(hex, sideA), edgeId(hex, sideB), edgeId(nb, (sideA + 3) % 6)];
+  // The 3 edges incident to a vertex are the union of the two side-edges
+  // around it on each of its (up to 3) owner hexes. Iterating all owners and
+  // deduping yields exactly 3 edges (each shared edge appears twice).
+  const owners = vertexOwners(hex, corner);
+  const seen = new Set<EdgeId>();
+  const out: EdgeId[] = [];
+  for (const o of owners) {
+    const sideA = (1 - o.corner + 6) % 6;
+    const sideB = (2 - o.corner + 6) % 6;
+    for (const s of [sideA, sideB]) {
+      const id = edgeId(o.coord, s);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
 }
 
 export function edgeEndpointVertices(
