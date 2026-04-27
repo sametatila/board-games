@@ -245,10 +245,26 @@ export function GameView({
       return getValidRoadEdges(state, me.id, inSetup, attach);
     }
     if (effectivePlacement === "road_building") {
-      // Sequential: validity may depend on already-picked edges in pendingRoadBuilding.
-      // For simplicity, we recompute against the current state without assuming
-      // the pending edges are placed. They're still validated server-side.
-      return getValidRoadEdges(state, me.id, false);
+      // Sequential: the second edge may legally connect through the
+      // first, so we splice the first pending pick into a temporary
+      // state before asking the reducer for valid placements.
+      if (pendingRoadBuilding.length === 0) {
+        return getValidRoadEdges(state, me.id, false);
+      }
+      const tentativeState = {
+        ...state,
+        pieces: [
+          ...state.pieces,
+          ...pendingRoadBuilding.map(
+            (eId) =>
+              ({ kind: "road", edgeId: eId, playerId: me.id }) as const,
+          ),
+        ],
+      };
+      // Don't offer the already-picked edges as candidates again.
+      return getValidRoadEdges(tentativeState, me.id, false).filter(
+        (e) => !pendingRoadBuilding.includes(e),
+      );
     }
     if (effectivePlacement === "ship") {
       return getValidShipEdges(state, me.id);
@@ -288,7 +304,7 @@ export function GameView({
         .map((p) => (p as { edgeId: string }).edgeId);
     }
     return undefined;
-  }, [effectivePlacement, state, me, inSetup, movingShipFrom]);
+  }, [effectivePlacement, state, me, inSetup, movingShipFrom, pendingRoadBuilding]);
 
   const validHexIds = useMemo<string[] | undefined>(() => {
     if (effectivePlacement === "robber" || effectivePlacement === "knight_robber") {
@@ -436,10 +452,12 @@ export function GameView({
       sendAction({ type: "UPGRADE_TO_WARSHIP", playerId: me.id, edgeId });
       clearPlacement();
     } else if (effectivePlacement === "road_building") {
-      // Collect 1 or 2 edges then send PLAY_ROAD_BUILDING.
+      // Collect 1 or 2 edges then send PLAY_ROAD_BUILDING. If the
+      // player only has one road piece left in supply, finalize after
+      // a single pick instead of waiting for an impossible second one.
       const next = [...pendingRoadBuilding, edgeId];
-      setPendingRoadBuilding(next);
-      if (next.length >= 2) {
+      const limit = Math.min(2, me.roadsRemaining);
+      if (next.length >= limit) {
         sendAction({
           type: "PLAY_ROAD_BUILDING",
           playerId: me.id,
@@ -447,6 +465,8 @@ export function GameView({
         });
         setPendingRoadBuilding([]);
         clearPlacement();
+      } else {
+        setPendingRoadBuilding(next);
       }
     }
   }
@@ -654,10 +674,17 @@ export function GameView({
               setPlacementMode(
                 placementMode === "knight_robber" ? null : "knight_robber",
               ),
-            onRoadBuilding: () =>
+            onRoadBuilding: () => {
               setPlacementMode(
                 placementMode === "road_building" ? null : "road_building",
-              ),
+              );
+              // Cancelling the picker should clear any half-finished
+              // selection so the next time the user opens it they
+              // start fresh.
+              if (placementMode === "road_building") {
+                setPendingRoadBuilding([]);
+              }
+            },
             onYearOfPlenty: () => setYopModalOpen(true),
             onMonopoly: () => setMonoModalOpen(true),
           }}

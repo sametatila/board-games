@@ -2094,6 +2094,8 @@ export function reduce(prev: GameState, action: GameAction): ReducerResult {
         `${cp.nickname} yol yapımı oynadı (${action.edgeIds.length} yol).`,
         cp.id,
       );
+      autoRevealFogHexes(state, cp.id);
+      updateLongestRoad(state);
       checkWinner(state);
       return { ok: true, state };
     }
